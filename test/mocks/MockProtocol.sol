@@ -119,7 +119,7 @@ contract MockMToken is ERC20 {
         return 0;
     }
 
-    function totalCash() external view returns (uint256) {
+    function getCash() external view returns (uint256) {
         return ERC20(underlyingAsset).balanceOf(address(this));
     }
 

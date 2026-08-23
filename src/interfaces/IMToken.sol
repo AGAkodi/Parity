@@ -95,7 +95,7 @@ interface IMToken {
     /**
      * @notice Returns cash balance of the underlying asset held by the market
      */
-    function totalCash() external view returns (uint256);
+    function getCash() external view returns (uint256);
 
     /**
      * @notice Returns total reserves of the market
