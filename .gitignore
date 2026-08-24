@@ -18,3 +18,12 @@ docs/
 .env
 .env.*
 !.env.example
+
+# Node.js specific files
+node_modules/
+dist/
+*.log
+agent/agent.log
+agent/events.json
+agent/sim_output.txt
+

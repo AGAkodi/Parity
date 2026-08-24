@@ -1,0 +1,26 @@
+{
+  "name": "parity-agent",
+  "version": "1.0.0",
+  "description": "Off-chain monitoring and keeper agent for Parity yield engine",
+  "main": "dist/agent.js",
+  "scripts": {
+    "start": "ts-node src/agent.ts",
+    "simulate": "ts-node src/simulate.ts",
+    "index": "ts-node src/indexer.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@coinbase/agentkit": "^0.1.1",
+    "@langchain/core": "^1.2.9",
+    "@langchain/groq": "^1.3.1",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
