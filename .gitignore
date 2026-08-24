@@ -12,6 +12,8 @@ lib/
 agent/agent.log
 agent/events.json
 agent/sim_output.txt
+.next/
+
 .env
 .env.*
 !.env.example

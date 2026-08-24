@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  /* SiteHook Inspired Color Palette */
+  --color-cream-light: #fcfbf7;
+  --color-cream-card: #fbfaf5;
+  --color-sage-green: #b4dec5;
+  --color-forest-dark: #132c21;
+  --color-forest-muted: #2d523e;
+
+  /* Custom Typography */
+  --font-serif: var(--font-fraunces), Georgia, serif;
+  --font-sans: var(--font-inter), sans-serif;
+}
+
+body {
+  background-color: #fcfbf7; /* Fallback to cream-light */
+  color: #132c21;            /* Fallback to forest-dark */
+  font-family: var(--font-sans);
+}
