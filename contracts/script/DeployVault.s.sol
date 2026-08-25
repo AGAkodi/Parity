@@ -8,12 +8,21 @@ import "../src/ParityKeeper.sol";
 contract DeployVault is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address keeperWallet = vm.envOr("KEEPER_WALLET_ADDRESS", address(0x9999));
+        address deployerAddress = vm.addr(deployerPrivateKey);
+        address keeperWallet = vm.envAddress("KEEPER_WALLET_ADDRESS");
 
         // Base Sepolia / Mainnet configurations
-        address assetAddress = vm.envOr("USDC_ADDRESS", address(0x036CbD53842c5426634e7929541eC2318f3dCF7e));
-        address mUSDCAddress = vm.envOr("MOONWELL_MUSDC", address(0xEdc817A28E8B93B03976FBd4a3dDBc9f7D176c22)); // fallback to mainnet fork value
-        address comptrollerAddress = vm.envOr("MOONWELL_COMPTROLLER", address(0xfBb21d0380beE3312B33c4353c8936a0F13EF26C));
+        address assetAddress = vm.envAddress("USDC_ADDRESS");
+        address mUSDCAddress = vm.envAddress("MOONWELL_MUSDC");
+        address comptrollerAddress = vm.envAddress("MOONWELL_COMPTROLLER");
+
+        console.log("=== Resolved Deployment Addresses ===");
+        console.log("Deployer Address:    ", deployerAddress);
+        console.log("Keeper Wallet:       ", keeperWallet);
+        console.log("USDC (Asset):        ", assetAddress);
+        console.log("mUSDC (Moonwell):    ", mUSDCAddress);
+        console.log("Comptroller:         ", comptrollerAddress);
+        console.log("=====================================");
 
         vm.startBroadcast(deployerPrivateKey);
 

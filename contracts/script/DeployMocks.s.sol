@@ -10,7 +10,12 @@ contract DeployMocks is Script {
         address deployerAddress = vm.addr(deployerPrivateKey);
         vm.deal(deployerAddress, 10 ether);
 
-        address usdcAddress = vm.envOr("USDC_ADDRESS", address(0x036CbD53842c5426634e7929541eC2318f3dCF7e));
+        address usdcAddress = vm.envAddress("USDC_ADDRESS");
+
+        console.log("=== Resolved Mock Deployment Addresses ===");
+        console.log("Deployer Address:    ", deployerAddress);
+        console.log("USDC (Asset):        ", usdcAddress);
+        console.log("==========================================");
 
         vm.startBroadcast(deployerPrivateKey);
 
