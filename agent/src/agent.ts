@@ -29,6 +29,8 @@ export function log(message: string, type: "info" | "warn" | "error" = "info") {
     }
 }
 
+const agentLog = log;
+
 // Load environment variables from the root .env file
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -386,6 +388,7 @@ Model B Counter-Proposal:
 }
 
 export async function runMonitoringCycle(
+    vaultName: string,
     providerUrl: string,
     keeperPrivateKey: string,
     vaultAddress: string,
@@ -395,6 +398,10 @@ export async function runMonitoringCycle(
     safetyHFThreshold: number,  // e.g. 1.10
     morphoAPYOverride?: number  // configured mock Morpho APY
 ) {
+    const log = (msg: string, type: "info" | "warn" | "error" = "info") => {
+        agentLog(`[${vaultName}] ${msg}`, type);
+    };
+
     log(`\n--- Starting Monitoring Cycle ---`);
 
     // 1. Initialize Ethers connections
@@ -469,9 +476,8 @@ export async function runMonitoringCycle(
         log(`Moonwell Net Leveraged APY: ${(netMoonwellAPY * 100).toFixed(2)}%`);
         log(`Morpho Flagship USDC APY: ${(morphoAPY * 100).toFixed(2)}%`);
 
-        apySnapshot = ethers.parseEther(
-            (activeVenue === mUSDCAddress ? netMoonwellAPY : morphoAPY).toFixed(18)
-        );
+        const rawApy = activeVenue === mUSDCAddress ? netMoonwellAPY : morphoAPY;
+        apySnapshot = ethers.parseEther(Math.max(0, rawApy).toFixed(18));
 
     } catch (readError: any) {
         log(`RPC read error in monitoring cycle: ${readError.message || readError}`, "error");
@@ -486,7 +492,7 @@ export async function runMonitoringCycle(
             const tx = await keeperContract.deleverage(
                 safeTargetLTV,
                 5,
-                `Fallback safety deleverage due to RPC read failure: ${readError.message || "Unknown error"}`,
+                `[${vaultName}] Fallback safety deleverage due to RPC read failure: ${readError.message || "Unknown error"}`,
                 fallbackApySnapshot,
                 { nonce }
             );
@@ -513,7 +519,7 @@ export async function runMonitoringCycle(
             const tx = await keeperContract.deleverage(
                 safeTargetLTV,
                 5,
-                `Emergency deleverage: HF (${healthFactor.toFixed(3)}) < ${safetyHFThreshold}`,
+                `[${vaultName}] Emergency deleverage: HF (${healthFactor.toFixed(3)}) < ${safetyHFThreshold}`,
                 apySnapshot,
                 { nonce }
             );
@@ -645,7 +651,7 @@ export async function runMonitoringCycle(
             const tx = await keeperContract.rebalance(
                 targetLTVWei,
                 5,
-                finalReason,
+                `[${vaultName}] ${finalReason}`,
                 apySnapshot,
                 { nonce }
             );
@@ -663,7 +669,7 @@ export async function runMonitoringCycle(
             const tx = await keeperContract.deleverage(
                 targetLTVWei,
                 5,
-                finalReason,
+                `[${vaultName}] ${finalReason}`,
                 apySnapshot,
                 { nonce }
             );
@@ -689,7 +695,7 @@ export async function runMonitoringCycle(
             const nonce = await provider.getTransactionCount(wallet.address, "latest");
             const tx = await keeperContract.migrate(
                 targetVenue,
-                finalReason,
+                `[${vaultName}] ${finalReason}`,
                 apySnapshot,
                 { nonce }
             );
@@ -706,39 +712,67 @@ export async function runMonitoringCycle(
 if (require.main === module) {
     const providerUrl = process.env.BASE_SEPOLIA_RPC_URL || "http://127.0.0.1:8545";
     const keeperPrivateKey = process.env.KEEPER_PRIVATE_KEY || "";
-    const vaultAddress = process.env.VAULT_ADDRESS || "";
-    const keeperAddress = process.env.KEEPER_ADDRESS || "";
     const mUSDCAddress = process.env.MOONWELL_MUSDC || "";
 
-    const targetLTV = Number(process.env.TARGET_LTV || "0.70");
-    const safetyHFThreshold = Number(
-        process.env.HEALTH_FACTOR_SAFETY_THRESHOLD || 
-        process.env.SAFETY_HF_THRESHOLD || 
-        "1.15"
-    );
+    if (!keeperPrivateKey || !mUSDCAddress) {
+        log("Missing configuration: Ensure KEEPER_PRIVATE_KEY and MOONWELL_MUSDC are configured.", "error");
+        process.exit(1);
+    }
 
-    if (!keeperPrivateKey || !vaultAddress || !keeperAddress || !mUSDCAddress) {
-        log("Missing configuration: Ensure KEEPER_PRIVATE_KEY, VAULT_ADDRESS, KEEPER_ADDRESS, and MOONWELL_MUSDC are configured.", "error");
+    // Configure vaults to monitor
+    const vaults = [
+        {
+            name: "Aggressive",
+            vaultAddress: process.env.VAULT_ADDRESS_AGGRESSIVE || process.env.VAULT_ADDRESS || "",
+            keeperAddress: process.env.KEEPER_ADDRESS_AGGRESSIVE || process.env.KEEPER_ADDRESS || "",
+            targetLTV: Number(process.env.TARGET_LTV_AGGRESSIVE || "0.70"),
+            safetyHFThreshold: Number(
+                process.env.SAFETY_HF_THRESHOLD_AGGRESSIVE || 
+                process.env.HEALTH_FACTOR_SAFETY_THRESHOLD || 
+                "1.10"
+            )
+        },
+        {
+            name: "Conservative",
+            vaultAddress: process.env.VAULT_ADDRESS_CONSERVATIVE || "",
+            keeperAddress: process.env.KEEPER_ADDRESS_CONSERVATIVE || "",
+            targetLTV: Number(process.env.TARGET_LTV_CONSERVATIVE || "0.50"),
+            safetyHFThreshold: Number(
+                process.env.SAFETY_HF_THRESHOLD_CONSERVATIVE || 
+                process.env.HEALTH_FACTOR_SAFETY_THRESHOLD || 
+                "1.10"
+            )
+        }
+    ].filter(v => v.vaultAddress && v.keeperAddress);
+
+    if (vaults.length === 0) {
+        log("No vaults configured. Ensure VAULT_ADDRESS and KEEPER_ADDRESS are set.", "error");
         process.exit(1);
     }
 
     // Periodic polling setup
     const intervalSeconds = Number(process.env.POLLING_INTERVAL || "30");
     log(`Starting Parity Keeper Agent (Polling every ${intervalSeconds} seconds)...`);
+    log(`Monitored Vaults: ${vaults.map(v => `${v.name} (${v.vaultAddress.slice(0, 6)}...)`).join(", ")}`);
 
     const run = async () => {
-        try {
-            await runMonitoringCycle(
-                providerUrl,
-                keeperPrivateKey,
-                vaultAddress,
-                keeperAddress,
-                mUSDCAddress,
-                targetLTV,
-                safetyHFThreshold
-            );
-        } catch (e: any) {
-            log(`RPC or transaction failure in monitoring cycle: ${e.message || e}`, "error");
+        for (const v of vaults) {
+            try {
+                await runMonitoringCycle(
+                    v.name,
+                    providerUrl,
+                    keeperPrivateKey,
+                    v.vaultAddress,
+                    v.keeperAddress,
+                    mUSDCAddress,
+                    v.targetLTV,
+                    v.safetyHFThreshold
+                );
+            } catch (e: any) {
+                log(`[${v.name}] RPC or transaction failure in monitoring cycle: ${e.message || e}`, "error");
+            }
+            // Wait 2 seconds between vaults to prevent rate limits
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
     };
 

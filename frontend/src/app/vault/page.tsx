@@ -15,11 +15,26 @@ import { useRouter } from "next/navigation";
 import { Activity, Shield, ArrowUpRight, CheckCircle2, ChevronRight, History } from "lucide-react";
 
 // Client-side environment variables configured on Base Sepolia
-const VAULT_ADDRESS = (process.env.NEXT_PUBLIC_VAULT_ADDRESS || "0x72B04f9A0281F9BF84c164C3A27a8Ec70863Fa90") as `0x${string}`;
-const KEEPER_ADDRESS = (process.env.NEXT_PUBLIC_KEEPER_ADDRESS || "0x64f5Ff15b5e7458BB10E064F4728281f14EFDb4e") as `0x${string}`;
 const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x036CbD53842c5426634e7929541eC2318f3dCF7e") as `0x${string}`;
 const MOONWELL_MUSDC = (process.env.NEXT_PUBLIC_MOONWELL_MUSDC || "0x7B35C6AddbB9bb30c640A5D8ae4ecD42BFcD2C19") as `0x${string}`;
 const MOONWELL_COMPTROLLER = (process.env.NEXT_PUBLIC_MOONWELL_COMPTROLLER || "0xA92c06c03ab912788c71F74eB0C828E84A159C0a") as `0x${string}`;
+
+const VAULTS = {
+  aggressive: {
+    name: "Aggressive Vault",
+    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS || "0x72B04f9A0281F9BF84c164C3A27a8Ec70863Fa90") as `0x${string}`,
+    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS || "0x64f5Ff15b5e7458BB10E064F4728281f14EFDb4e") as `0x${string}`,
+    targetLtv: "70.00%",
+    safetyThreshold: 1.10,
+  },
+  conservative: {
+    name: "Conservative Vault",
+    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS_CONSERVATIVE || "0x4CefA66aF34174eC9aDDD6496D34C893De17952D") as `0x${string}`,
+    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS_CONSERVATIVE || "0xF6846A9B498e56Aa814a0529Bbc3A123d694018a") as `0x${string}`,
+    targetLtv: "50.00%",
+    safetyThreshold: 1.10,
+  }
+} as const;
 
 // ABIs for contract interactions
 const VAULT_ABI = [
@@ -141,6 +156,10 @@ interface LogEvent {
 }
 
 export default function VaultPage() {
+  const [activeVaultType, setActiveVaultType] = useState<"aggressive" | "conservative">("aggressive");
+  const VAULT_ADDRESS = VAULTS[activeVaultType].vaultAddress;
+  const KEEPER_ADDRESS = VAULTS[activeVaultType].keeperAddress;
+
   const [mounted, setMounted] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [activeTxType, setActiveTxType] = useState<"approve" | "deposit" | null>(null);
@@ -163,24 +182,48 @@ export default function VaultPage() {
     }
   }, [isConnected, mounted, router]);
 
-  // Global Vault contract reads
-  const { data: rawActiveVenue, isLoading: loadingVenue, refetch: refetchVenue } = useReadContract({
-    address: VAULT_ADDRESS,
+  // Aggressive Reads
+  const { data: rawActiveVenueAgg, isLoading: loadingVenueAgg, refetch: refetchVenueAgg } = useReadContract({
+    address: VAULTS.aggressive.vaultAddress,
     abi: VAULT_ABI,
     functionName: "activeVenue",
   });
-
-  const { data: rawHealthFactor, isLoading: loadingHF, refetch: refetchHF } = useReadContract({
-    address: VAULT_ADDRESS,
+  const { data: rawHealthFactorAgg, isLoading: loadingHFAgg, refetch: refetchHFAgg } = useReadContract({
+    address: VAULTS.aggressive.vaultAddress,
     abi: VAULT_ABI,
     functionName: "getHealthFactor",
   });
-
-  const { data: rawTotalAssets, isLoading: loadingAssets, refetch: refetchAssets } = useReadContract({
-    address: VAULT_ADDRESS,
+  const { data: rawTotalAssetsAgg, isLoading: loadingAssetsAgg, refetch: refetchAssetsAgg } = useReadContract({
+    address: VAULTS.aggressive.vaultAddress,
     abi: VAULT_ABI,
     functionName: "totalAssets",
   });
+
+  // Conservative Reads
+  const { data: rawActiveVenueCons, isLoading: loadingVenueCons, refetch: refetchVenueCons } = useReadContract({
+    address: VAULTS.conservative.vaultAddress,
+    abi: VAULT_ABI,
+    functionName: "activeVenue",
+  });
+  const { data: rawHealthFactorCons, isLoading: loadingHFCons, refetch: refetchHFCons } = useReadContract({
+    address: VAULTS.conservative.vaultAddress,
+    abi: VAULT_ABI,
+    functionName: "getHealthFactor",
+  });
+  const { data: rawTotalAssetsCons, isLoading: loadingAssetsCons, refetch: refetchAssetsCons } = useReadContract({
+    address: VAULTS.conservative.vaultAddress,
+    abi: VAULT_ABI,
+    functionName: "totalAssets",
+  });
+
+  // Map active vault reads dynamically
+  const rawActiveVenue = activeVaultType === "aggressive" ? rawActiveVenueAgg : rawActiveVenueCons;
+  const rawHealthFactor = activeVaultType === "aggressive" ? rawHealthFactorAgg : rawHealthFactorCons;
+  const rawTotalAssets = activeVaultType === "aggressive" ? rawTotalAssetsAgg : rawTotalAssetsCons;
+
+  const loadingVenue = activeVaultType === "aggressive" ? loadingVenueAgg : loadingVenueCons;
+  const loadingHF = activeVaultType === "aggressive" ? loadingHFAgg : loadingHFCons;
+  const loadingAssets = activeVaultType === "aggressive" ? loadingAssetsAgg : loadingAssetsCons;
 
   // Moonwell reads for current LTV computation
   const { data: rawMusdcBalance, isLoading: loadingMusdcBal, refetch: refetchMusdc } = useReadContract({
@@ -244,9 +287,12 @@ export default function VaultPage() {
 
   // Refetch all state
   const refetchAll = () => {
-    refetchVenue();
-    refetchHF();
-    refetchAssets();
+    refetchVenueAgg();
+    refetchHFAgg();
+    refetchAssetsAgg();
+    refetchVenueCons();
+    refetchHFCons();
+    refetchAssetsCons();
     refetchMusdc();
     refetchRate();
     refetchBorrow();
@@ -364,7 +410,7 @@ export default function VaultPage() {
     };
 
     fetchEvents();
-  }, [publicClient]);
+  }, [publicClient, activeVaultType]);
 
   useEffect(() => {
     setMounted(true);
@@ -539,6 +585,63 @@ export default function VaultPage() {
       {/* RIGHT COLUMN: DASHBOARD & CARDS (Sage Background) */}
       <section className="w-full lg:w-[55%] bg-sage-green p-8 md:p-16 lg:p-24 flex flex-col justify-center items-center gap-8 shrink-0">
         
+        {/* Side-by-Side Quick Stats Cards (Switcher) */}
+        <div className="grid grid-cols-2 gap-4 w-full max-w-lg">
+          {/* Aggressive Card */}
+          <div 
+            onClick={() => setActiveVaultType("aggressive")}
+            className={`p-5 rounded-3xl border transition-all cursor-pointer flex flex-col justify-between gap-4 ${
+              activeVaultType === "aggressive" 
+                ? "bg-cream-card border-forest-dark shadow-sm ring-1 ring-forest-dark/10" 
+                : "bg-cream-card/50 border-forest-dark/10 opacity-70 hover:opacity-100 hover:bg-cream-card/75"
+            }`}
+          >
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-forest-muted">Aggressive</span>
+              <span className={`w-2 h-2 rounded-full ${rawHealthFactorAgg && Number(rawHealthFactorAgg) < 1100000000000000000n ? "bg-red-500 animate-pulse" : "bg-emerald-600"}`} />
+            </div>
+            <div>
+              <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Health Factor</p>
+              <span className="text-3xl font-serif font-black text-forest-dark mt-1 block">
+                {rawHealthFactorAgg 
+                  ? (Number(rawHealthFactorAgg) > 1e20 ? "∞" : (Number(rawHealthFactorAgg)/1e18).toFixed(2)) 
+                  : "..."}
+              </span>
+            </div>
+            <div className="text-[10px] text-forest-muted border-t border-forest-dark/10 pt-2 flex justify-between font-sans">
+              <span>{rawActiveVenueAgg ? (rawActiveVenueAgg.toLowerCase() === MOONWELL_MUSDC.toLowerCase() ? "Moonwell" : "Morpho") : "..."}</span>
+              <span className="font-bold">70% Target</span>
+            </div>
+          </div>
+
+          {/* Conservative Card */}
+          <div 
+            onClick={() => setActiveVaultType("conservative")}
+            className={`p-5 rounded-3xl border transition-all cursor-pointer flex flex-col justify-between gap-4 ${
+              activeVaultType === "conservative" 
+                ? "bg-cream-card border-forest-dark shadow-sm ring-1 ring-forest-dark/10" 
+                : "bg-cream-card/50 border-forest-dark/10 opacity-70 hover:opacity-100 hover:bg-cream-card/75"
+            }`}
+          >
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-forest-muted">Conservative</span>
+              <span className={`w-2 h-2 rounded-full ${rawHealthFactorCons && Number(rawHealthFactorCons) < 1100000000000000000n ? "bg-red-500 animate-pulse" : "bg-emerald-600"}`} />
+            </div>
+            <div>
+              <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Health Factor</p>
+              <span className="text-3xl font-serif font-black text-forest-dark mt-1 block">
+                {rawHealthFactorCons 
+                  ? (Number(rawHealthFactorCons) > 1e20 ? "∞" : (Number(rawHealthFactorCons)/1e18).toFixed(2)) 
+                  : "..."}
+              </span>
+            </div>
+            <div className="text-[10px] text-forest-muted border-t border-forest-dark/10 pt-2 flex justify-between font-sans">
+              <span>{rawActiveVenueCons ? (rawActiveVenueCons.toLowerCase() === MOONWELL_MUSDC.toLowerCase() ? "Moonwell" : "Morpho") : "..."}</span>
+              <span className="font-bold">50% Target</span>
+            </div>
+          </div>
+        </div>
+
         {/* Card 1: Vault Status */}
         <div className="bg-cream-card border border-forest-dark/15 rounded-3xl p-6 md:p-10 w-full max-w-lg shadow-sm flex flex-col gap-8 shrink-0">
           
@@ -546,7 +649,7 @@ export default function VaultPage() {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Vault Status / Live</p>
-              <h2 className="text-3xl font-serif font-black text-forest-dark mt-1 leading-tight">Parity Vault</h2>
+              <h2 className="text-3xl font-serif font-black text-forest-dark mt-1 leading-tight">{VAULTS[activeVaultType].name}</h2>
             </div>
             <div className="text-right">
               <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Health Factor</p>
@@ -561,13 +664,13 @@ export default function VaultPage() {
             
             {/* Status 1: Health Factor */}
             <div className="border-t border-forest-dark/10 py-5 flex gap-4">
-              <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${healthFactor !== null && healthFactor < 1.15 ? "bg-red-500 animate-pulse" : "bg-emerald-600"}`} />
+              <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${healthFactor !== null && healthFactor < VAULTS[activeVaultType].safetyThreshold ? "bg-red-500 animate-pulse" : "bg-emerald-600"}`} />
               <div>
                 <h4 className="text-sm font-bold text-forest-dark leading-none">
-                  {healthFactor !== null && healthFactor < 1.15 ? "Emergency Deleverage Flagged" : "Leverage Safety Bounded"}
+                  {healthFactor !== null && healthFactor < VAULTS[activeVaultType].safetyThreshold ? "Emergency Deleverage Flagged" : "Leverage Safety Bounded"}
                 </h4>
                 <p className="text-xs text-forest-muted/90 mt-1.5 leading-normal">
-                  Current Health Factor is <strong className="text-forest-dark">{hfDisplay}</strong>. Safety-critical bypass threshold set to <strong className="text-forest-dark">1.15</strong>.
+                  Current Health Factor is <strong className="text-forest-dark">{hfDisplay}</strong>. Safety-critical bypass threshold set to <strong className="text-forest-dark">{VAULTS[activeVaultType].safetyThreshold.toFixed(2)}</strong>.
                 </p>
               </div>
             </div>
@@ -578,7 +681,7 @@ export default function VaultPage() {
               <div>
                 <h4 className="text-sm font-bold text-forest-dark leading-none">Leveraged Position Active</h4>
                 <p className="text-xs text-forest-muted/90 mt-1.5 leading-normal">
-                  Current Loan-to-Value: <strong className="text-forest-dark">{ltvDisplay}</strong>. Optimization engine targets <strong className="text-forest-dark">70.00% LTV</strong>.
+                  Current Loan-to-Value: <strong className="text-forest-dark">{ltvDisplay}</strong>. Optimization engine targets <strong className="text-forest-dark">{VAULTS[activeVaultType].targetLtv} Target LTV</strong>.
                 </p>
               </div>
             </div>

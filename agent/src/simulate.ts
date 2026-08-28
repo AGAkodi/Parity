@@ -152,6 +152,7 @@ async function main() {
     const runAgent = async (morphoApy: number) => {
         process.env.MORPHO_VAULT_ADDRESS = morphoAddress;
         await runMonitoringCycle(
+            "Aggressive",
             ANVIL_RPC,
             KEEPER_PRIVATE_KEY,
             vaultAddress,
@@ -260,6 +261,7 @@ async function main() {
     console.log("\nSimulating read failure by running cycle with an invalid vault address...");
     try {
         await runMonitoringCycle(
+            "Aggressive",
             ANVIL_RPC,
             KEEPER_PRIVATE_KEY,
             ethers.ZeroAddress, // Invalid vault address to cause read failure
