@@ -155,6 +155,18 @@ interface LogEvent {
   apy: string;
 }
 
+interface DepositFlowState {
+  txHash: `0x${string}`;
+  vaultType: "aggressive" | "conservative";
+  keeperAddress: `0x${string}`;
+  depositBlockNumber?: bigint;
+  depositTimestamp: number;
+  initialLtv?: number | null;
+  stage1: "complete";
+  stage2: "pending" | "complete" | "hold" | "timeout";
+  stage2Ltv?: number | null;
+}
+
 export default function VaultPage() {
   const [activeVaultType, setActiveVaultType] = useState<"aggressive" | "conservative">("aggressive");
   const VAULT_ADDRESS = VAULTS[activeVaultType].vaultAddress;
@@ -163,6 +175,8 @@ export default function VaultPage() {
   const [mounted, setMounted] = useState(false);
   const [depositAmount, setDepositAmount] = useState("");
   const [activeTxType, setActiveTxType] = useState<"approve" | "deposit" | null>(null);
+  const [lastTxType, setLastTxType] = useState<"approve" | "deposit" | null>(null);
+  const [depositFlow, setDepositFlow] = useState<DepositFlowState | null>(null);
 
   const router = useRouter();
 
@@ -305,9 +319,41 @@ export default function VaultPage() {
     }
   };
 
+  // Vault-wide values formatting
+  const activeVenue = rawActiveVenue 
+    ? (rawActiveVenue.toLowerCase() === MOONWELL_MUSDC.toLowerCase() ? "Moonwell" : "Morpho") 
+    : null;
+
+  const healthFactor = rawHealthFactor 
+    ? (Number(rawHealthFactor) > 1e20 ? Infinity : Number(rawHealthFactor) / 1e18) 
+    : null;
+
+  const totalAssets = rawTotalAssets 
+    ? Number(rawTotalAssets) / 1e6 
+    : null;
+
+  const currentLTV = (rawMusdcBalance !== undefined && rawExchangeRate !== undefined && rawBorrowBalance !== undefined)
+    ? (() => {
+        const supplied = (BigInt(rawMusdcBalance) * BigInt(rawExchangeRate)) / 10n ** 18n;
+        const borrowed = BigInt(rawBorrowBalance);
+        return supplied > 0n ? Number((borrowed * 10000n) / supplied) / 100 : 0;
+      })()
+    : null;
+
+  const secondsInYear = 31536000n;
+  const supplyApy = rawSupplyRate
+    ? (Number(BigInt(rawSupplyRate) * secondsInYear) / 1e16).toFixed(2)
+    : "8.33";
+
+  const formattedHF = healthFactor === null 
+    ? "..." 
+    : healthFactor === Infinity 
+      ? "∞" 
+      : healthFactor.toFixed(2);
+
   // Transaction Write Hooks
   const { writeContract, data: txHash, isPending: isTxPending, error: txError } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess: isConfirmed, data: txReceipt } = useWaitForTransactionReceipt({
     hash: txHash,
   });
 
@@ -315,10 +361,29 @@ export default function VaultPage() {
   useEffect(() => {
     if (isConfirmed) {
       refetchAll();
+      if (lastTxType === "deposit" && txHash) {
+        setDepositFlow({
+          txHash,
+          vaultType: activeVaultType,
+          keeperAddress: KEEPER_ADDRESS,
+          depositBlockNumber: txReceipt?.blockNumber,
+          depositTimestamp: Date.now(),
+          initialLtv: currentLTV,
+          stage1: "complete",
+          stage2: "pending",
+        });
+      }
       setDepositAmount("");
       setActiveTxType(null);
     }
   }, [isConfirmed]);
+
+  // Update block number if receipt arrives after confirmation state
+  useEffect(() => {
+    if (txReceipt?.blockNumber && depositFlow && !depositFlow.depositBlockNumber) {
+      setDepositFlow((prev) => prev ? { ...prev, depositBlockNumber: txReceipt.blockNumber } : null);
+    }
+  }, [txReceipt, depositFlow]);
 
   // Reset active transaction state on error
   useEffect(() => {
@@ -331,6 +396,122 @@ export default function VaultPage() {
   const [actionLogs, setActionLogs] = useState<LogEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [activeLog, setActiveLog] = useState<LogEvent | null>(null);
+
+  // Poll for post-deposit position building / agent execution
+  useEffect(() => {
+    if (!depositFlow || depositFlow.stage2 !== "pending" || !publicClient) return;
+
+    let isMounted = true;
+    const startTime = depositFlow.depositTimestamp;
+    const timeoutDuration = 120000; // 2 minutes timeout cap
+
+    const checkAgentAction = async () => {
+      try {
+        refetchMusdc();
+        refetchRate();
+        refetchBorrow();
+
+        const fromBlock = depositFlow.depositBlockNumber 
+          ? (depositFlow.depositBlockNumber > 5n ? depositFlow.depositBlockNumber - 5n : 0n) 
+          : 0n;
+
+        const logs = await publicClient.getContractEvents({
+          address: depositFlow.keeperAddress,
+          abi: [
+            {
+              type: "event",
+              name: "KeeperAction",
+              inputs: [
+                { type: "string", name: "action", indexed: false },
+                { type: "string", name: "reason", indexed: false },
+                { type: "uint256", name: "hfBefore", indexed: false },
+                { type: "uint256", name: "hfAfter", indexed: false },
+                { type: "uint256", name: "apySnapshot", indexed: false },
+                { type: "uint256", name: "timestamp", indexed: false },
+              ],
+            }
+          ],
+          eventName: "KeeperAction",
+          fromBlock,
+        });
+
+        const depositTimeSec = Math.floor(depositFlow.depositTimestamp / 1000) - 5;
+        const recentAction = logs
+          .map((log: any) => ({
+            action: (log.args.action || "").toLowerCase(),
+            reason: log.args.reason || "",
+            timestamp: Number(log.args.timestamp || 0),
+          }))
+          .filter((e) => e.timestamp >= depositTimeSec)
+          .reverse()[0];
+
+        if (recentAction) {
+          if (recentAction.action.includes("rebalance") || recentAction.action.includes("leverage")) {
+            if (isMounted) {
+              setDepositFlow((prev) => prev ? {
+                ...prev,
+                stage2: "complete",
+                stage2Ltv: currentLTV,
+              } : null);
+            }
+            return;
+          } else if (recentAction.action.includes("hold")) {
+            if (isMounted) {
+              setDepositFlow((prev) => prev ? {
+                ...prev,
+                stage2: "hold",
+                stage2Ltv: currentLTV,
+              } : null);
+            }
+            return;
+          }
+        }
+
+        // LTV target heuristic check
+        const targetNum = depositFlow.vaultType === "aggressive" ? 70 : 50;
+        if (currentLTV !== null && currentLTV >= targetNum * 0.8) {
+          if (depositFlow.initialLtv !== undefined && depositFlow.initialLtv !== null && currentLTV > depositFlow.initialLtv + 3) {
+            if (isMounted) {
+              setDepositFlow((prev) => prev ? {
+                ...prev,
+                stage2: "complete",
+                stage2Ltv: currentLTV,
+              } : null);
+            }
+            return;
+          }
+        }
+
+        if (Date.now() - startTime >= timeoutDuration) {
+          if (isMounted) {
+            setDepositFlow((prev) => prev ? {
+              ...prev,
+              stage2: "timeout",
+            } : null);
+          }
+        }
+      } catch (err) {
+        console.error("Error monitoring agent deposit position:", err);
+      }
+    };
+
+    const intervalId = setInterval(checkAgentAction, 5000);
+    checkAgentAction();
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [
+    depositFlow?.stage2, 
+    depositFlow?.depositTimestamp, 
+    depositFlow?.depositBlockNumber, 
+    depositFlow?.keeperAddress, 
+    depositFlow?.initialLtv,
+    depositFlow?.vaultType,
+    publicClient, 
+    currentLTV
+  ]);
 
   // Fetch keeper logs on-chain
   useEffect(() => {
@@ -426,38 +607,6 @@ export default function VaultPage() {
     );
   }
 
-  // Vault-wide values formatting
-  const activeVenue = rawActiveVenue 
-    ? (rawActiveVenue.toLowerCase() === MOONWELL_MUSDC.toLowerCase() ? "Moonwell" : "Morpho") 
-    : null;
-
-  const healthFactor = rawHealthFactor 
-    ? (Number(rawHealthFactor) > 1e20 ? Infinity : Number(rawHealthFactor) / 1e18) 
-    : null;
-
-  const totalAssets = rawTotalAssets 
-    ? Number(rawTotalAssets) / 1e6 
-    : null;
-
-  const currentLTV = (rawMusdcBalance !== undefined && rawExchangeRate !== undefined && rawBorrowBalance !== undefined)
-    ? (() => {
-        const supplied = (BigInt(rawMusdcBalance) * BigInt(rawExchangeRate)) / 10n ** 18n;
-        const borrowed = BigInt(rawBorrowBalance);
-        return supplied > 0n ? Number((borrowed * 10000n) / supplied) / 100 : 0;
-      })()
-    : null;
-
-  const secondsInYear = 31536000n;
-  const supplyApy = rawSupplyRate
-    ? (Number(BigInt(rawSupplyRate) * secondsInYear) / 1e16).toFixed(2)
-    : "8.33";
-
-  const formattedHF = healthFactor === null 
-    ? "..." 
-    : healthFactor === Infinity 
-      ? "∞" 
-      : healthFactor.toFixed(2);
-
   // Form logic variables
   const amountInWei = depositAmount && !isNaN(Number(depositAmount)) 
     ? BigInt(Math.floor(Number(depositAmount) * 1e6)) 
@@ -481,6 +630,7 @@ export default function VaultPage() {
 
   const handleApprove = () => {
     setActiveTxType("approve");
+    setLastTxType("approve");
     writeContract({
       address: USDC_ADDRESS,
       abi: ERC20_ABI,
@@ -492,6 +642,8 @@ export default function VaultPage() {
   const handleDeposit = () => {
     if (!address) return;
     setActiveTxType("deposit");
+    setLastTxType("deposit");
+    setDepositFlow(null);
     writeContract({
       address: VAULT_ADDRESS,
       abi: VAULT_ABI,
@@ -806,6 +958,65 @@ export default function VaultPage() {
                 </a>
                 {isConfirming && <span className="block text-amber-600 mt-1 animate-pulse font-bold">Waiting for network confirmation...</span>}
                 {isConfirmed && <span className="block text-emerald-600 mt-1 font-bold">Transaction confirmed successfully!</span>}
+
+                {/* Post-Deposit Status Sequence */}
+                {depositFlow && isConfirmed && (
+                  <div className="mt-4 pt-4 border-t border-forest-dark/10 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">
+                        Position Pipeline
+                      </p>
+                      <span className="text-[9px] font-mono text-forest-muted/70">
+                        {depositFlow.stage2 === "complete" ? "Leverage Applied" : depositFlow.stage2 === "pending" ? "Awaiting Agent Cycle" : "Agent Monitored"}
+                      </span>
+                    </div>
+
+                    {/* Stage 1: Collateral Supplied */}
+                    <div className="flex items-start gap-3 bg-forest-dark/5 p-3 rounded-xl">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600 mt-1 shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-forest-dark leading-tight">
+                          Stage 1: Collateral Supplied
+                        </span>
+                        <span className="text-[11px] text-forest-muted mt-0.5 leading-normal">
+                          Your USDC is now supplying collateral on Moonwell.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Stage 2: Leverage Position Building */}
+                    <div className="flex items-start gap-3 bg-forest-dark/5 p-3 rounded-xl">
+                      <span 
+                        className={`w-2 h-2 rounded-full mt-1 shrink-0 ${
+                          depositFlow.stage2 === "complete" 
+                            ? "bg-emerald-600" 
+                            : depositFlow.stage2 === "pending" 
+                              ? "bg-amber-500 animate-pulse" 
+                              : "bg-forest-muted/60"
+                        }`} 
+                      />
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-forest-dark leading-tight">
+                          Stage 2: Leverage Position Building
+                        </span>
+                        <span className="text-[11px] text-forest-muted mt-0.5 leading-normal">
+                          {depositFlow.stage2 === "complete" && (
+                            <>Position leveraged to <strong className="text-forest-dark font-mono font-bold">{depositFlow.stage2Ltv !== null && depositFlow.stage2Ltv !== undefined ? `${depositFlow.stage2Ltv.toFixed(2)}%` : ltvDisplay} LTV</strong>.</>
+                          )}
+                          {depositFlow.stage2 === "pending" && (
+                            <>The agent will build your leveraged position on its next monitoring cycle (~30s).</>
+                          )}
+                          {depositFlow.stage2 === "hold" && (
+                            <>Agent evaluated market and held position (safe target maintained). Check the Decisions Feed for details.</>
+                          )}
+                          {depositFlow.stage2 === "timeout" && (
+                            <>Waiting for agent — check the Decisions Feed for the latest action.</>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
