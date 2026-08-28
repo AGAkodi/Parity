@@ -755,7 +755,27 @@ if (require.main === module) {
     log(`Starting Parity Keeper Agent (Polling every ${intervalSeconds} seconds)...`);
     log(`Monitored Vaults: ${vaults.map(v => `${v.name} (${v.vaultAddress.slice(0, 6)}...)`).join(", ")}`);
 
+    let isCycleRunning = false;
+    let isShuttingDown = false;
+
+    const handleShutdown = (signal: string) => {
+        log(`Received ${signal}. Graceful shutdown initiated...`, "warn");
+        isShuttingDown = true;
+        if (!isCycleRunning) {
+            log("No cycle in progress. Exiting process now.");
+            process.exit(0);
+        } else {
+            log("Waiting for active cycle to finish before exiting...");
+        }
+    };
+
+    process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+    process.on("SIGINT", () => handleShutdown("SIGINT"));
+
     const run = async () => {
+        if (isShuttingDown) return;
+        isCycleRunning = true;
+
         for (const v of vaults) {
             try {
                 await runMonitoringCycle(
@@ -773,6 +793,14 @@ if (require.main === module) {
             }
             // Wait 2 seconds between vaults to prevent rate limits
             await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        isCycleRunning = false;
+        log(`[HEARTBEAT] ${new Date().toISOString()} - cycle complete for all monitored vaults (${vaults.map(v => v.name).join(", ")})`);
+
+        if (isShuttingDown) {
+            log("Active cycle completed. Exiting now as requested by shutdown signal.");
+            process.exit(0);
         }
     };
 

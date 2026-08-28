@@ -4,7 +4,8 @@
   "description": "Off-chain monitoring and keeper agent for Parity yield engine",
   "main": "dist/agent.js",
   "scripts": {
-    "start": "ts-node src/agent.ts",
+    "start": "node dist/agent.js",
+    "dev": "ts-node src/agent.ts",
     "simulate": "ts-node src/simulate.ts",
     "index": "ts-node src/indexer.ts",
     "test:sepolia": "ts-node src/testOnSepolia.ts",
