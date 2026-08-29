@@ -896,7 +896,7 @@ if (require.main === module) {
     log(`Monitored Vaults: ${vaults.map(v => `${v.name} (${v.vaultAddress.slice(0, 6)}...)`).join(", ")}`);
 
     // Start HTTP server to expose discussions
-    const PORT = Number(process.env.PORT || "3000");
+    const PORT = Number(process.env.PORT || "3001");
     const server = http.createServer((req, res) => {
         // Enable CORS
         res.setHeader("Access-Control-Allow-Origin", "*");

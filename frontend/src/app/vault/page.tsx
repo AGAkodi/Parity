@@ -609,7 +609,7 @@ export default function VaultPage() {
 
   // Poll agent for discussions
   useEffect(() => {
-    const agentUrl = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:3000";
+    const agentUrl = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:3001";
     let active = true;
 
     const fetchDiscussions = async () => {
