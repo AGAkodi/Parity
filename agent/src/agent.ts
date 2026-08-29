@@ -2,6 +2,7 @@ import * as ethers from "ethers";
 import * as dotenv from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
+import * as http from "http";
 import { ChatGroq } from "@langchain/groq";
 import { z } from "zod";
 
@@ -108,6 +109,50 @@ export interface ReconciliationResult {
     confidence: number;
     targetLTV?: number | null;
     venueAddress?: string | null;
+}
+
+export interface DiscussionEntry {
+    vaultName: string;
+    timestamp: string;
+    healthFactor: number;
+    currentLTV: number;
+    activeVenue: string;
+    modelAProposal: {
+        action: string;
+        reasoning: string;
+        confidence: number;
+        targetLTV?: number | null;
+        venueAddress?: string | null;
+    } | null;
+    modelBReview: {
+        agree: boolean;
+        action: string;
+        reasoning: string;
+        confidence: number;
+        targetLTV?: number | null;
+        venueAddress?: string | null;
+    } | null;
+    reconciliation: {
+        agreeWithCounterProposal: boolean;
+        action: string;
+        reasoning: string;
+        confidence: number;
+        targetLTV?: number | null;
+        venueAddress?: string | null;
+    } | null;
+    finalAction: string;
+    finalReason: string;
+}
+
+export const discussionsBuffer: DiscussionEntry[] = [];
+
+export function recordDiscussion(entry: DiscussionEntry) {
+    discussionsBuffer.unshift(entry);
+    const aggressive = discussionsBuffer.filter(e => e.vaultName === "Aggressive").slice(0, 20);
+    const conservative = discussionsBuffer.filter(e => e.vaultName === "Conservative").slice(0, 20);
+    discussionsBuffer.length = 0;
+    discussionsBuffer.push(...aggressive, ...conservative);
+    discussionsBuffer.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 }
 
 const modelASystemPrompt = `You are Parity's primary yield optimizer agent (Model A).
@@ -425,6 +470,10 @@ export async function runMonitoringCycle(
     let netMoonwellAPY = 0;
     let apySnapshot = 0n;
 
+    let modelAProposalRecord: DiscussionEntry["modelAProposal"] = null;
+    let modelBReviewRecord: DiscussionEntry["modelBReview"] = null;
+    let reconciliationRecord: DiscussionEntry["reconciliation"] = null;
+
     // 2. Fetch live Vault and Moonwell parameters with robust try/catch
     try {
         // Verify Keeper Contract Paused State
@@ -489,10 +538,25 @@ export async function runMonitoringCycle(
             const fallbackApySnapshot = ethers.parseEther("0.0");
             const nonce = await provider.getTransactionCount(wallet.address, "latest");
             log(`Sending fallback safety deleverage transaction (target LTV: 55%)...`);
+
+            const reasonStr = `[${vaultName}] Fallback safety deleverage due to RPC read failure: ${readError.message || "Unknown error"}`;
+            recordDiscussion({
+                vaultName,
+                timestamp: new Date().toISOString(),
+                healthFactor: 0,
+                currentLTV: 0,
+                activeVenue: "Unknown",
+                modelAProposal: null,
+                modelBReview: null,
+                reconciliation: null,
+                finalAction: "deleverage",
+                finalReason: reasonStr
+            });
+
             const tx = await keeperContract.deleverage(
                 safeTargetLTV,
                 5,
-                `[${vaultName}] Fallback safety deleverage due to RPC read failure: ${readError.message || "Unknown error"}`,
+                reasonStr,
                 fallbackApySnapshot,
                 { nonce }
             );
@@ -512,6 +576,20 @@ export async function runMonitoringCycle(
     if (activeVenue === mUSDCAddress && healthFactor < safetyHFThreshold && borrowed > 0n) {
         log(`🚨 EMERGENCY: Health Factor (${healthFactor.toFixed(4)}) is below safety threshold (${safetyHFThreshold})!`, "warn");
         
+        const reasonStr = `[${vaultName}] Emergency deleverage: HF (${healthFactor.toFixed(3)}) < ${safetyHFThreshold}`;
+        recordDiscussion({
+            vaultName,
+            timestamp: new Date().toISOString(),
+            healthFactor,
+            currentLTV,
+            activeVenue: activeVenue === mUSDCAddress ? "Moonwell" : "Morpho",
+            modelAProposal: null,
+            modelBReview: null,
+            reconciliation: null,
+            finalAction: "deleverage",
+            finalReason: reasonStr
+        });
+
         try {
             // Target LTV is 0.55 (safe zone)
             const safeTargetLTV = ethers.parseEther("0.55");
@@ -519,7 +597,7 @@ export async function runMonitoringCycle(
             const tx = await keeperContract.deleverage(
                 safeTargetLTV,
                 5,
-                `[${vaultName}] Emergency deleverage: HF (${healthFactor.toFixed(3)}) < ${safetyHFThreshold}`,
+                reasonStr,
                 apySnapshot,
                 { nonce }
             );
@@ -572,15 +650,42 @@ export async function runMonitoringCycle(
 
     try {
         modelAProposal = await getModelAProposal(liveInputs, groqModelA, groqApiKey);
+        modelAProposalRecord = {
+            action: modelAProposal.action,
+            reasoning: modelAProposal.reasoning,
+            confidence: modelAProposal.confidence,
+            targetLTV: modelAProposal.targetLTV,
+            venueAddress: modelAProposal.venueAddress
+        };
         log(`[Model A Proposal]: Action: "${modelAProposal.action}", Confidence: ${modelAProposal.confidence}`);
         log(`[Model A Reasoning]: ${modelAProposal.reasoning}`);
 
         modelBReview = await getModelBReview(liveInputs, groqModelB, modelAProposal, groqApiKey);
+        modelBReviewRecord = {
+            agree: modelBReview.agree,
+            action: modelBReview.action,
+            reasoning: modelBReview.reasoning,
+            confidence: modelBReview.confidence,
+            targetLTV: modelBReview.targetLTV,
+            venueAddress: modelBReview.venueAddress
+        };
         log(`[Model B Review]: Agree: ${modelBReview.agree}, Action: "${modelBReview.action}", Confidence: ${modelBReview.confidence}`);
         log(`[Model B Reasoning]: ${modelBReview.reasoning}`);
     } catch (e: any) {
         log(`Groq consensus query failed or timed out: ${e.message || e}`, "error");
         log(`Defaulting to HOLD (no action taken) due to model query failure.`, "warn");
+        recordDiscussion({
+            vaultName,
+            timestamp: new Date().toISOString(),
+            healthFactor,
+            currentLTV,
+            activeVenue: activeVenue === mUSDCAddress ? "Moonwell" : "Morpho",
+            modelAProposal: modelAProposalRecord,
+            modelBReview: modelBReviewRecord,
+            reconciliation: null,
+            finalAction: "hold",
+            finalReason: `Groq consensus query failed or timed out: ${e.message || e}`
+        });
         return;
     }
 
@@ -608,6 +713,15 @@ export async function runMonitoringCycle(
             log(`[Reconciliation Result]: Agree with counter-proposal: ${reconciliation.agreeWithCounterProposal}, Action: "${reconciliation.action}"`);
             log(`[Reconciliation Reasoning]: ${reconciliation.reasoning}`);
 
+            reconciliationRecord = {
+                agreeWithCounterProposal: reconciliation.agreeWithCounterProposal,
+                action: reconciliation.action,
+                reasoning: reconciliation.reasoning,
+                confidence: reconciliation.confidence,
+                targetLTV: reconciliation.targetLTV,
+                venueAddress: reconciliation.venueAddress
+            };
+
             if (reconciliation.agreeWithCounterProposal && reconciliation.action === modelBReview.action) {
                 log(`✅ Agreement reached after reconciliation pass! Action: "${reconciliation.action}"`);
                 finalAction = reconciliation.action;
@@ -633,11 +747,37 @@ export async function runMonitoringCycle(
         } catch (e: any) {
             log(`Error during reconciliation pass: ${e.message || e}`, "error");
             log(`Defaulting to HOLD (no action taken) due to reconciliation failure.`, "warn");
+            recordDiscussion({
+                vaultName,
+                timestamp: new Date().toISOString(),
+                healthFactor,
+                currentLTV,
+                activeVenue: activeVenue === mUSDCAddress ? "Moonwell" : "Morpho",
+                modelAProposal: modelAProposalRecord,
+                modelBReview: modelBReviewRecord,
+                reconciliation: null,
+                finalAction: "hold",
+                finalReason: `Error during reconciliation pass: ${e.message || e}`
+            });
             return;
         }
     }
 
-    // Step 5: Execute action
+    // Step 5: Record final decided action in discussionsBuffer BEFORE execution
+    recordDiscussion({
+        vaultName,
+        timestamp: new Date().toISOString(),
+        healthFactor,
+        currentLTV,
+        activeVenue: activeVenue === mUSDCAddress ? "Moonwell" : "Morpho",
+        modelAProposal: modelAProposalRecord,
+        modelBReview: modelBReviewRecord,
+        reconciliation: reconciliationRecord,
+        finalAction,
+        finalReason
+    });
+
+    // Step 6: Execute action
     if (finalAction === "hold") {
         log(`✅ Decision outcome: HOLD. No action executed. Reason: ${finalReason}`);
         return;
@@ -755,12 +895,43 @@ if (require.main === module) {
     log(`Starting Parity Keeper Agent (Polling every ${intervalSeconds} seconds)...`);
     log(`Monitored Vaults: ${vaults.map(v => `${v.name} (${v.vaultAddress.slice(0, 6)}...)`).join(", ")}`);
 
+    // Start HTTP server to expose discussions
+    const PORT = Number(process.env.PORT || "3000");
+    const server = http.createServer((req, res) => {
+        // Enable CORS
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        if (req.method === "OPTIONS") {
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+        if (req.url === "/api/discussions" && req.method === "GET") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(discussionsBuffer));
+        } else {
+            res.writeHead(404);
+            res.end();
+        }
+    });
+
+    server.listen(PORT, "0.0.0.0", () => {
+        log(`Discussion server listening on port ${PORT}`);
+    });
+
     let isCycleRunning = false;
     let isShuttingDown = false;
 
     const handleShutdown = (signal: string) => {
         log(`Received ${signal}. Graceful shutdown initiated...`, "warn");
         isShuttingDown = true;
+        
+        // Close server
+        server.close(() => {
+            log("Discussion HTTP server closed.");
+        });
+
         if (!isCycleRunning) {
             log("No cycle in progress. Exiting process now.");
             process.exit(0);

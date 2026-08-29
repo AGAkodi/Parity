@@ -34,7 +34,7 @@ export default function LandingPage() {
   if (!mounted) return null;
 
   const handleConnect = () => {
-    const connector = connectors.find((c) => c.id === "injected") || connectors[0];
+    const connector = connectors.find((c: any) => c.id === "injected") || connectors[0];
     if (connector) {
       connect({ connector });
     } else {

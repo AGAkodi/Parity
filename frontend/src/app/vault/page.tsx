@@ -178,6 +178,16 @@ export default function VaultPage() {
   const [lastTxType, setLastTxType] = useState<"approve" | "deposit" | null>(null);
   const [depositFlow, setDepositFlow] = useState<DepositFlowState | null>(null);
 
+  // Agent Discussion Feed states
+  const [discussions, setDiscussions] = useState<any[]>([]);
+  const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
+  const [selectedDiscussionTime, setSelectedDiscussionTime] = useState<string | null>(null);
+
+  // When activeVaultType changes, reset the selected discussion to show the latest
+  useEffect(() => {
+    setSelectedDiscussionTime(null);
+  }, [activeVaultType]);
+
   const router = useRouter();
 
   // Wagmi wallet and network hooks
@@ -442,7 +452,7 @@ export default function VaultPage() {
             reason: log.args.reason || "",
             timestamp: Number(log.args.timestamp || 0),
           }))
-          .filter((e) => e.timestamp >= depositTimeSec)
+          .filter((e: any) => e.timestamp >= depositTimeSec)
           .reverse()[0];
 
         if (recentAction) {
@@ -597,6 +607,37 @@ export default function VaultPage() {
     setMounted(true);
   }, []);
 
+  // Poll agent for discussions
+  useEffect(() => {
+    const agentUrl = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:3000";
+    let active = true;
+
+    const fetchDiscussions = async () => {
+      try {
+        const res = await fetch(`${agentUrl}/api/discussions`);
+        if (!res.ok) throw new Error("Server returned non-ok status");
+        const data = await res.json();
+        if (active) {
+          setDiscussions(data);
+          setAgentOnline(true);
+        }
+      } catch (err) {
+        console.error("Error fetching agent discussions:", err);
+        if (active) {
+          setAgentOnline(false);
+        }
+      }
+    };
+
+    fetchDiscussions();
+    const interval = setInterval(fetchDiscussions, 12000); // 12 seconds polling
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   // Prevent flash of content if not mounted or not connected
   if (!mounted || !isConnected) {
     return (
@@ -619,7 +660,7 @@ export default function VaultPage() {
     if (isConnected) {
       disconnect();
     } else {
-      const connector = connectors.find((c) => c.id === "injected") || connectors[0];
+      const connector = connectors.find((c: any) => c.id === "injected") || connectors[0];
       if (connector) {
         connect({ connector });
       } else {
@@ -661,6 +702,14 @@ export default function VaultPage() {
       : "Error";
   const venueDisplay = loadingVenue ? "Loading..." : (activeVenue || "Error");
   const assetsDisplay = loadingAssets ? "Loading..." : (totalAssets !== null ? `${totalAssets.toFixed(2)} USDC` : "Error");
+
+  const activeDiscussions = discussions.filter(
+    (d: any) => d.vaultName.toLowerCase() === activeVaultType.toLowerCase()
+  );
+  
+  const currentDiscussion = selectedDiscussionTime 
+    ? activeDiscussions.find((d: any) => d.timestamp === selectedDiscussionTime) || activeDiscussions[0]
+    : activeDiscussions[0];
 
   return (
     <main className="min-h-screen w-full flex flex-col lg:flex-row m-0 p-0">
@@ -1021,6 +1070,205 @@ export default function VaultPage() {
             )}
 
           </div>
+        </div>
+
+        {/* Card 1.8: Agent Discussion Feed */}
+        <div className="bg-cream-card border border-forest-dark/15 rounded-3xl p-6 md:p-8 w-full max-w-lg shadow-sm flex flex-col gap-6 shrink-0">
+          <div>
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">AI Consensus / Reasoning</p>
+                <h2 className="text-3xl font-serif font-black text-forest-dark mt-1 leading-tight">Agent Discussion</h2>
+              </div>
+              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                agentOnline === true 
+                  ? "bg-emerald-100 text-emerald-800" 
+                  : agentOnline === false 
+                    ? "bg-rose-100 text-rose-800" 
+                    : "bg-forest-dark/10 text-forest-muted animate-pulse"
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  agentOnline === true 
+                    ? "bg-emerald-600 animate-pulse" 
+                    : agentOnline === false 
+                      ? "bg-rose-600" 
+                      : "bg-forest-muted/50"
+                }`} />
+                {agentOnline === true ? "Agent Online" : agentOnline === false ? "Agent Offline" : "Connecting..."}
+              </span>
+            </div>
+            <p className="text-xs text-forest-muted mt-2 leading-relaxed">
+              Real-time feed of the dual-model LLM reasoning process. Every 30 seconds, Model A (Proposer) and Model B (Reviewer) negotiate to reach a consensus decision.
+            </p>
+          </div>
+
+          {agentOnline === false ? (
+            <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-6 text-center">
+              <p className="text-xs text-rose-800/80 font-medium italic">
+                Agent discussion feed temporarily unavailable.
+              </p>
+              <p className="text-[10px] text-rose-800/60 mt-1 leading-normal font-sans">
+                The off-chain monitoring server may be offline or restarting. On-chain safety rules remain active.
+              </p>
+            </div>
+          ) : discussions.length === 0 ? (
+            <div className="bg-forest-dark/5 border border-forest-dark/10 rounded-2xl p-6 text-center flex flex-col items-center justify-center gap-2">
+              <div className="w-5 h-5 rounded-full border-2 border-forest-dark/10 border-t-forest-dark animate-spin" />
+              <p className="text-xs text-forest-muted italic">Awaiting first agent reasoning cycle...</p>
+            </div>
+          ) : currentDiscussion ? (
+            <div className="flex flex-col gap-5">
+              
+              {/* Detailed View of Selected/Latest Discussion */}
+              <div className={`border rounded-2xl p-4 md:p-5 flex flex-col gap-4 transition-all ${
+                currentDiscussion.finalAction === "hold" 
+                  ? "bg-cream-card/40 border-forest-dark/10" 
+                  : "bg-cream-card border-forest-dark/25 shadow-xs"
+              }`}>
+                {/* Discussion Header */}
+                <div className="flex justify-between items-center border-b border-forest-dark/10 pb-3">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-forest-dark font-mono uppercase">
+                      Cycle Snapshot
+                    </span>
+                    <span className="text-[9px] text-forest-muted/75 font-mono">
+                      {new Date(currentDiscussion.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-mono text-forest-muted/65 bg-forest-dark/5 px-2 py-0.5 rounded">
+                      HF: {currentDiscussion.healthFactor === Infinity ? "∞" : currentDiscussion.healthFactor.toFixed(2)}
+                    </span>
+                    <span className="text-[9px] font-mono text-forest-muted/65 bg-forest-dark/5 px-2 py-0.5 rounded">
+                      LTV: {(currentDiscussion.currentLTV * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* conversation-style exchange */}
+                <div className="flex flex-col gap-3.5">
+                  {/* Model A Stack */}
+                  {currentDiscussion.modelAProposal ? (
+                    <div className="bg-forest-dark/5 p-3.5 rounded-2xl flex flex-col gap-1 border border-forest-dark/5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-forest-dark flex items-center gap-1">
+                          <span>🤖</span> Model A (Proposer)
+                        </span>
+                        <span className="text-[9px] font-mono font-bold bg-forest-dark/10 text-forest-dark px-2 py-0.5 rounded uppercase">
+                          {currentDiscussion.modelAProposal.action}
+                        </span>
+                      </div>
+                      <p className="text-xs text-forest-muted mt-1 leading-relaxed font-sans">
+                        {currentDiscussion.modelAProposal.reasoning}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50/70 border border-amber-200/50 p-3.5 rounded-2xl flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900">
+                        <span>🛡️</span> On-Chain Safety Bypass
+                      </div>
+                      <p className="text-xs text-amber-800 mt-1 leading-relaxed font-sans">
+                        {currentDiscussion.finalReason}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Model B Stack */}
+                  {currentDiscussion.modelBReview && (
+                    <div className="bg-forest-dark/5 p-3.5 rounded-2xl flex flex-col gap-1 border border-forest-dark/5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-forest-dark flex items-center gap-1">
+                          <span>⚖️</span> Model B (Reviewer)
+                        </span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                          currentDiscussion.modelBReview.agree 
+                            ? "bg-emerald-100 text-emerald-800" 
+                            : "bg-rose-100 text-rose-800"
+                        }`}>
+                          {currentDiscussion.modelBReview.agree ? "Agree" : `Counter: ${currentDiscussion.modelBReview.action}`}
+                        </span>
+                      </div>
+                      <p className="text-xs text-forest-muted mt-1 leading-relaxed font-sans">
+                        {currentDiscussion.modelBReview.reasoning}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Reconciliation Pass Stack */}
+                  {currentDiscussion.reconciliation && (
+                    <div className="bg-amber-50/50 border border-amber-200/30 p-3.5 rounded-2xl flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-900">
+                        <span>🔄</span> Reconciliation Outcome
+                      </div>
+                      <p className="text-xs text-forest-muted mt-1 leading-relaxed font-sans">
+                        {currentDiscussion.reconciliation.reasoning}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Final Decision Box */}
+                <div className={`mt-2 border-t border-forest-dark/10 pt-3.5 flex flex-col gap-1`}>
+                  <p className="text-[9px] uppercase font-bold text-forest-muted tracking-wider">Final Decision Reached</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`w-2 h-2 rounded-full ${
+                      currentDiscussion.finalAction === "hold" 
+                        ? "bg-forest-muted/50" 
+                        : "bg-emerald-600 animate-pulse"
+                    }`} />
+                    <span className={`text-base font-serif font-black uppercase tracking-tight ${
+                      currentDiscussion.finalAction === "hold" ? "text-forest-muted" : "text-emerald-800"
+                    }`}>
+                      {currentDiscussion.finalAction === "hold" ? "Hold (No Action)" : `${currentDiscussion.finalAction} (Executing Tx)`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-forest-muted mt-1 leading-relaxed font-sans">
+                    {currentDiscussion.finalAction === "hold" 
+                      ? "The consensus layer decided to hold the current allocation. Yield spread is optimal, and safety metrics are within boundaries."
+                      : `The consensus layer resolved to take action: "${currentDiscussion.finalReason.split('|')[0].trim()}"`}
+                  </p>
+                </div>
+              </div>
+
+              {/* History Badges List */}
+              {activeDiscussions.length > 1 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Reasoning History</p>
+                  <div className="flex gap-2 overflow-x-auto pb-1.5 scrollbar-none">
+                    {activeDiscussions.slice(0, 6).map((item: any, index: number) => {
+                      const itemTime = new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                      const isSelected = selectedDiscussionTime 
+                        ? selectedDiscussionTime === item.timestamp 
+                        : index === 0;
+
+                      return (
+                        <button
+                          key={item.timestamp}
+                          type="button"
+                          onClick={() => setSelectedDiscussionTime(item.timestamp)}
+                          className={`px-3 py-1.5 rounded-xl border text-[10px] font-mono flex items-center gap-1.5 shrink-0 transition-all cursor-pointer ${
+                            isSelected 
+                              ? "bg-forest-dark text-cream-light border-forest-dark font-bold shadow-xs" 
+                              : "bg-cream-card/75 text-forest-dark border-forest-dark/10 hover:bg-cream-card"
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            item.finalAction === "hold" ? "bg-forest-muted/40" : "bg-emerald-600"
+                          }`} />
+                          <span>{itemTime} ({item.finalAction.toUpperCase()})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          ) : (
+            <div className="bg-forest-dark/5 border border-forest-dark/10 rounded-2xl p-6 text-center">
+              <p className="text-xs text-forest-muted italic">No discussion data found for {activeVaultType} vault.</p>
+            </div>
+          )}
         </div>
 
         {/* Card 2 & Preview Area: Action Logs */}
