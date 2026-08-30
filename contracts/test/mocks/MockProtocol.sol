@@ -27,26 +27,68 @@ contract MockMToken is ERC20 {
     uint256 public mockExchangeRate = 1e18; // 1 mToken = 1 USDC by default
     uint256 public mockSupplyRate = 1585489599; // 5% APY per-second rate
     uint256 public mockBorrowRate = 2219785438; // 7% APY per-second rate
+    uint256 public lastAccrualTimestamp;
+    uint256 public borrowIndex = 1e18;
 
     mapping(address => uint256) public userBorrows;
+    mapping(address => uint256) public accountBorrowIndex;
 
     constructor(address _underlying) ERC20("Mock Moonwell USDC", "mUSDC") {
         underlyingAsset = _underlying;
+        lastAccrualTimestamp = block.timestamp;
     }
 
     function underlying() external view returns (address) {
         return underlyingAsset;
     }
 
+    function _accrueInterest() internal {
+        if (lastAccrualTimestamp == 0) {
+            lastAccrualTimestamp = block.timestamp;
+            return;
+        }
+        uint256 elapsed = block.timestamp - lastAccrualTimestamp;
+        if (elapsed > 0) {
+            if (mockSupplyRate > 0 && mockExchangeRate > 0) {
+                uint256 supplyInterest = (mockExchangeRate * mockSupplyRate * elapsed) / 1e18;
+                mockExchangeRate += supplyInterest;
+            }
+            if (mockBorrowRate > 0 && borrowIndex > 0) {
+                uint256 borrowInterest = (borrowIndex * mockBorrowRate * elapsed) / 1e18;
+                borrowIndex += borrowInterest;
+            }
+            lastAccrualTimestamp = block.timestamp;
+        }
+    }
+
+    function _accrueAccountInterest(address account) internal {
+        _accrueInterest();
+        if (account == address(0)) return;
+        if (userBorrows[account] > 0) {
+            if (accountBorrowIndex[account] > 0 && borrowIndex > accountBorrowIndex[account]) {
+                userBorrows[account] = (userBorrows[account] * borrowIndex) / accountBorrowIndex[account];
+            }
+        }
+        accountBorrowIndex[account] = borrowIndex;
+    }
+
+    function accrueInterest() external returns (uint256) {
+        _accrueInterest();
+        return 0;
+    }
+
     function setExchangeRate(uint256 rate) external {
+        _accrueInterest();
         mockExchangeRate = rate;
     }
 
     function setSupplyRate(uint256 rate) external {
+        _accrueInterest();
         mockSupplyRate = rate;
     }
 
     function setBorrowRate(uint256 rate) external {
+        _accrueInterest();
         mockBorrowRate = rate;
     }
 
@@ -55,6 +97,7 @@ contract MockMToken is ERC20 {
     }
 
     function exchangeRateCurrent() external returns (uint256) {
+        _accrueInterest();
         return mockExchangeRate;
     }
 
@@ -75,6 +118,7 @@ contract MockMToken is ERC20 {
     }
 
     function mint(uint256 mintAmount) external returns (uint256) {
+        _accrueInterest();
         require(ERC20(underlyingAsset).transferFrom(msg.sender, address(this), mintAmount), "USDC transfer failed");
         uint256 mTokensToMint = (mintAmount * 1e18) / mockExchangeRate;
         _mint(msg.sender, mTokensToMint);
@@ -82,6 +126,7 @@ contract MockMToken is ERC20 {
     }
 
     function redeem(uint256 redeemTokens) external returns (uint256) {
+        _accrueInterest();
         uint256 underlyingAmount = (redeemTokens * mockExchangeRate) / 1e18;
         _burn(msg.sender, redeemTokens);
         require(ERC20(underlyingAsset).transfer(msg.sender, underlyingAmount), "USDC transfer failed");
@@ -89,6 +134,7 @@ contract MockMToken is ERC20 {
     }
 
     function redeemUnderlying(uint256 redeemAmount) external returns (uint256) {
+        _accrueInterest();
         uint256 mTokensToBurn = (redeemAmount * 1e18) / mockExchangeRate;
         _burn(msg.sender, mTokensToBurn);
         require(ERC20(underlyingAsset).transfer(msg.sender, redeemAmount), "USDC transfer failed");
@@ -96,14 +142,20 @@ contract MockMToken is ERC20 {
     }
 
     function borrow(uint256 borrowAmount) external returns (uint256) {
+        _accrueAccountInterest(msg.sender);
         userBorrows[msg.sender] += borrowAmount;
         require(ERC20(underlyingAsset).transfer(msg.sender, borrowAmount), "USDC transfer failed");
         return 0; // Compound success code
     }
 
     function repayBorrow(uint256 repayAmount) external returns (uint256) {
+        _accrueAccountInterest(msg.sender);
         require(ERC20(underlyingAsset).transferFrom(msg.sender, address(this), repayAmount), "USDC transfer failed");
-        userBorrows[msg.sender] -= repayAmount;
+        if (repayAmount >= userBorrows[msg.sender]) {
+            userBorrows[msg.sender] = 0;
+        } else {
+            userBorrows[msg.sender] -= repayAmount;
+        }
         return 0; // Compound success code
     }
 
@@ -112,6 +164,7 @@ contract MockMToken is ERC20 {
     }
 
     function borrowBalanceCurrent(address account) external returns (uint256) {
+        _accrueAccountInterest(account);
         return userBorrows[account];
     }
 

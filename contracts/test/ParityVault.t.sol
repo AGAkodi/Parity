@@ -334,4 +334,86 @@ contract ParityVaultTest is Test {
         keeper.unpause();
         assertFalse(keeper.paused());
     }
+
+    function testTimeBasedSupplyAccrual() public {
+        // Provide liquidity to mUSDC so it can pay interest on redemption
+        usdc.mint(address(mUSDC), 1000 * 1e6);
+
+        uint256 depositAmount = 100 * 1e6; // 100 USDC
+        vm.prank(alice);
+        vault.deposit(depositAmount, alice);
+
+        uint256 initialAssets = vault.totalAssets();
+        assertEq(initialAssets, 100 * 1e6);
+
+        // Advance time by 30 days (2,592,000 seconds)
+        vm.warp(block.timestamp + 30 days);
+
+        // Calling exchangeRateCurrent accrues interest
+        uint256 rateAfter30Days = mUSDC.exchangeRateCurrent();
+        assertTrue(rateAfter30Days > 1e18);
+
+        // Vault totalAssets should now reflect the accrued interest
+        uint256 accruedAssets = vault.totalAssets();
+        assertTrue(accruedAssets > initialAssets);
+
+        // Alice redeems her shares and gets principal + accrued interest
+        vm.prank(alice);
+        uint256 receivedAssets = vault.redeem(100 * 1e6, alice, alice);
+        assertTrue(receivedAssets > 100 * 1e6);
+        assertApproxEqAbs(receivedAssets, accruedAssets, 1);
+    }
+
+    function testTimeBasedBorrowAccrual() public {
+        // Fund mUSDC with liquidity so borrowing works
+        usdc.mint(address(mUSDC), 500 * 1e6);
+
+        // Alice approves mUSDC and deposits collateral
+        vm.startPrank(alice);
+        usdc.approve(address(mUSDC), type(uint256).max);
+        mUSDC.mint(100 * 1e6);
+
+        // Alice borrows 50 USDC
+        mUSDC.borrow(50 * 1e6);
+        vm.stopPrank();
+
+        uint256 initialBorrow = mUSDC.borrowBalanceStored(alice);
+        assertEq(initialBorrow, 50 * 1e6);
+
+        // Advance time by 30 days
+        vm.warp(block.timestamp + 30 days);
+
+        // borrowBalanceStored remains previous until accrual
+        assertEq(mUSDC.borrowBalanceStored(alice), 50 * 1e6);
+
+        // borrowBalanceCurrent triggers accrual and returns increased debt
+        uint256 accruedBorrow = mUSDC.borrowBalanceCurrent(alice);
+        assertTrue(accruedBorrow > initialBorrow);
+
+        // borrowBalanceStored now reflects the accrued borrow
+        assertEq(mUSDC.borrowBalanceStored(alice), accruedBorrow);
+    }
+
+    function testRateChangePreservesPriorAccrual() public {
+        uint256 initialRate = mUSDC.exchangeRateStored();
+        assertEq(initialRate, 1e18);
+
+        // Advance time by 10 days
+        vm.warp(block.timestamp + 10 days);
+
+        // Change supply rate to 10% APY
+        uint256 newRate = 3170979198;
+        mUSDC.setSupplyRate(newRate);
+
+        // Exchange rate should have accrued the 10 days of interest at the old rate
+        uint256 rateAfterChange = mUSDC.exchangeRateStored();
+        assertTrue(rateAfterChange > initialRate);
+        assertEq(mUSDC.supplyRatePerTimestamp(), newRate);
+
+        // Advance time by another 10 days
+        vm.warp(block.timestamp + 10 days);
+
+        uint256 finalRate = mUSDC.exchangeRateCurrent();
+        assertTrue(finalRate > rateAfterChange);
+    }
 }
