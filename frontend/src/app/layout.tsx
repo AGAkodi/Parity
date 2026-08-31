@@ -18,6 +18,13 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Parity - Autonomous Yield Optimization",
   description: "The autonomous leveraged yield agent that watches your yield so you don't have to.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/favicon.png", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({

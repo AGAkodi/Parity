@@ -732,11 +732,9 @@ export default function VaultPage() {
         
         {/* Navigation / Header with Connect Wallet button */}
         <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-forest-dark flex items-center justify-center">
-              <span className="text-cream-light font-serif font-bold text-xs">P</span>
-            </div>
-            <span className="font-serif font-black tracking-widest text-lg text-forest-dark uppercase">Parity</span>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => router.push("/")}>
+            <img src="/logo.png" alt="Parity Logo" className="w-9 h-9 object-contain rounded-lg shadow-sm" />
+            <span className="font-serif font-black tracking-widest text-xl text-forest-dark uppercase">Parity</span>
           </div>
 
           <button
