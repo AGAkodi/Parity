@@ -1195,8 +1195,19 @@ export default function VaultPage() {
                   {/* Reconciliation Pass Stack */}
                   {currentDiscussion.reconciliation && (
                     <div className="bg-amber-50/50 border border-amber-200/30 p-3.5 rounded-2xl flex flex-col gap-1">
-                      <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-900">
-                        <span>🔄</span> Reconciliation Outcome
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-amber-900 flex items-center gap-1">
+                          <span>🔄</span> Reconciliation Attempt
+                        </span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                          currentDiscussion.reconciliation.agreeWithCounterProposal 
+                            ? "bg-emerald-100 text-emerald-800" 
+                            : "bg-amber-100 text-amber-800"
+                        }`}>
+                          {currentDiscussion.reconciliation.agreeWithCounterProposal 
+                            ? `Agreed: ${currentDiscussion.reconciliation.action}` 
+                            : `Declined: ${currentDiscussion.reconciliation.action}`}
+                        </span>
                       </div>
                       <p className="text-xs text-forest-muted mt-1 leading-relaxed font-sans">
                         {currentDiscussion.reconciliation.reasoning}
@@ -1221,9 +1232,7 @@ export default function VaultPage() {
                     </span>
                   </div>
                   <p className="text-[11px] text-forest-muted mt-1 leading-relaxed font-sans">
-                    {currentDiscussion.finalAction === "hold" 
-                      ? "The consensus layer decided to hold the current allocation. Yield spread is optimal, and safety metrics are within boundaries."
-                      : `The consensus layer resolved to take action: "${currentDiscussion.finalReason.split('|')[0].trim()}"`}
+                    {currentDiscussion.finalReason}
                   </p>
                 </div>
               </div>
