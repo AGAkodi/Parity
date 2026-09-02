@@ -22,15 +22,17 @@ const MOONWELL_COMPTROLLER = (process.env.NEXT_PUBLIC_MOONWELL_COMPTROLLER || "0
 const VAULTS = {
   aggressive: {
     name: "Aggressive Vault",
-    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS || "0x72B04f9A0281F9BF84c164C3A27a8Ec70863Fa90") as `0x${string}`,
-    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS || "0x64f5Ff15b5e7458BB10E064F4728281f14EFDb4e") as `0x${string}`,
+    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS || "0xF35b785bb8344557Bc851AB82EBD8Ed0bE953Eb0") as `0x${string}`,
+    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS || "0x587eadfb5da24050940841a512EaDe2386829C52") as `0x${string}`,
+    deploymentBlock: 46305256n,
     targetLtv: "70.00%",
     safetyThreshold: 1.10,
   },
   conservative: {
     name: "Conservative Vault",
-    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS_CONSERVATIVE || "0x4CefA66aF34174eC9aDDD6496D34C893De17952D") as `0x${string}`,
-    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS_CONSERVATIVE || "0xF6846A9B498e56Aa814a0529Bbc3A123d694018a") as `0x${string}`,
+    vaultAddress: (process.env.NEXT_PUBLIC_VAULT_ADDRESS_CONSERVATIVE || "0x1E3604FCAC6A166780aEE4b05147E80956136744") as `0x${string}`,
+    keeperAddress: (process.env.NEXT_PUBLIC_KEEPER_ADDRESS_CONSERVATIVE || "0xEc08a3BD0462a467C088d44528BED7Ec33bf8278") as `0x${string}`,
+    deploymentBlock: 46305305n,
     targetLtv: "50.00%",
     safetyThreshold: 1.10,
   }
@@ -353,11 +355,11 @@ export default function VaultPage() {
     : null;
 
   const secondsInYear = 31536000n;
-  const supplyApy = rawSupplyRate
+  const supplyApy = (rawSupplyRate !== undefined && rawSupplyRate !== null && !isNaN(Number(rawSupplyRate)))
     ? (Number(BigInt(rawSupplyRate) * secondsInYear) / 1e16).toFixed(2)
     : "8.33";
 
-  const formattedHF = healthFactor === null 
+  const formattedHF = (healthFactor === null || healthFactor === undefined || isNaN(healthFactor))
     ? "..." 
     : healthFactor === Infinity 
       ? "∞" 
@@ -423,9 +425,10 @@ export default function VaultPage() {
         refetchRate();
         refetchBorrow();
 
+        const fallbackBlock = VAULTS[depositFlow.vaultType]?.deploymentBlock ?? 46305256n;
         const fromBlock = depositFlow.depositBlockNumber 
-          ? (depositFlow.depositBlockNumber > 5n ? depositFlow.depositBlockNumber - 5n : 0n) 
-          : 0n;
+          ? (depositFlow.depositBlockNumber > 5n ? depositFlow.depositBlockNumber - 5n : fallbackBlock) 
+          : fallbackBlock;
 
         const logs = await publicClient.getContractEvents({
           address: depositFlow.keeperAddress,
@@ -532,29 +535,44 @@ export default function VaultPage() {
     const fetchEvents = async () => {
       setLoadingEvents(true);
       try {
-        const logs = await publicClient.getContractEvents({
-          address: KEEPER_ADDRESS,
-          abi: [
-            {
-              type: "event",
-              name: "KeeperAction",
-              inputs: [
-                { type: "string", name: "action", indexed: false },
-                { type: "string", name: "reason", indexed: false },
-                { type: "uint256", name: "hfBefore", indexed: false },
-                { type: "uint256", name: "hfAfter", indexed: false },
-                { type: "uint256", name: "apySnapshot", indexed: false },
-                { type: "uint256", name: "timestamp", indexed: false },
-              ],
-            }
-          ],
-          eventName: "KeeperAction",
-          fromBlock: 0n,
-        });
+        const deploymentBlock = VAULTS[activeVaultType].deploymentBlock;
+        const currentBlock = await publicClient.getBlockNumber();
+        const startBlock = deploymentBlock > currentBlock ? currentBlock : deploymentBlock;
+        const CHUNK_SIZE = 9000n;
+
+        let logs: any[] = [];
+        for (let chunkStart = startBlock; chunkStart <= currentBlock; chunkStart += CHUNK_SIZE) {
+          const chunkEnd = chunkStart + CHUNK_SIZE - 1n > currentBlock 
+            ? currentBlock 
+            : chunkStart + CHUNK_SIZE - 1n;
+
+          const chunkLogs = await publicClient.getContractEvents({
+            address: KEEPER_ADDRESS,
+            abi: [
+              {
+                type: "event",
+                name: "KeeperAction",
+                inputs: [
+                  { type: "string", name: "action", indexed: false },
+                  { type: "string", name: "reason", indexed: false },
+                  { type: "uint256", name: "hfBefore", indexed: false },
+                  { type: "uint256", name: "hfAfter", indexed: false },
+                  { type: "uint256", name: "apySnapshot", indexed: false },
+                  { type: "uint256", name: "timestamp", indexed: false },
+                ],
+              }
+            ],
+            eventName: "KeeperAction",
+            fromBlock: chunkStart,
+            toBlock: chunkEnd,
+          });
+
+          logs = logs.concat(chunkLogs);
+        }
 
         const formattedLogs = logs.map((log: any) => {
-          const { action, reason, hfBefore, hfAfter, apySnapshot, timestamp } = log.args;
-          const timeVal = Number(timestamp);
+          const { action, reason, hfBefore, hfAfter, apySnapshot, timestamp } = log?.args || {};
+          const timeVal = Number(timestamp || 0);
           const date = new Date(timeVal * 1000);
           const diffSeconds = Math.floor(Date.now() / 1000 - timeVal);
           
@@ -569,25 +587,40 @@ export default function VaultPage() {
             timeStr = `${Math.floor(diffSeconds / 86400)} days ago`;
           }
 
-          const hfBeforeStr = Number(hfBefore) > 1e20 ? "∞" : (Number(hfBefore) / 1e18).toFixed(2);
-          const hfAfterStr = Number(hfAfter) > 1e20 ? "∞" : (Number(hfAfter) / 1e18).toFixed(2);
+          const hfBeforeNum = hfBefore !== undefined && hfBefore !== null ? Number(hfBefore) : null;
+          const hfBeforeStr = hfBeforeNum === null || isNaN(hfBeforeNum) 
+            ? "—" 
+            : hfBeforeNum > 1e20 
+              ? "∞" 
+              : (hfBeforeNum / 1e18).toFixed(2);
 
+          const hfAfterNum = hfAfter !== undefined && hfAfter !== null ? Number(hfAfter) : null;
+          const hfAfterStr = hfAfterNum === null || isNaN(hfAfterNum) 
+            ? "—" 
+            : hfAfterNum > 1e20 
+              ? "∞" 
+              : (hfAfterNum / 1e18).toFixed(2);
+
+          const safeReason = typeof reason === "string" ? reason : "";
           let status: LogEvent["status"] = "Consensus (Agreement)";
-          if (reason.toLowerCase().includes("fallback") || reason.toLowerCase().includes("disagreement")) {
+          if (safeReason.toLowerCase().includes("fallback") || safeReason.toLowerCase().includes("disagreement")) {
             status = "Fallback (Disagreement)";
-          } else if (reason.toLowerCase().includes("reconciliation") || reason.toLowerCase().includes("reconciled")) {
+          } else if (safeReason.toLowerCase().includes("reconciliation") || safeReason.toLowerCase().includes("reconciled")) {
             status = "Consensus (Reconciliation)";
-          } else if (reason.toLowerCase().includes("bypass") || reason.toLowerCase().includes("safety")) {
+          } else if (safeReason.toLowerCase().includes("bypass") || safeReason.toLowerCase().includes("safety")) {
             status = "Bypass (Safety Check)";
           }
 
+          const apyVal = apySnapshot !== undefined && apySnapshot !== null ? Number(apySnapshot) : null;
+          const apyFormatted = apyVal !== null && !isNaN(apyVal) ? `${(apyVal / 100).toFixed(2)}%` : "—";
+
           return {
             time: timeStr,
-            action: action.toUpperCase() as LogEvent["action"],
+            action: (typeof action === "string" ? action.toUpperCase() : "HOLD") as LogEvent["action"],
             status,
-            reason,
+            reason: safeReason,
             hf: `${hfBeforeStr} ➔ ${hfAfterStr}`,
-            apy: `${(Number(apySnapshot) / 100).toFixed(2)}%`,
+            apy: apyFormatted,
           };
         }).reverse();
 
@@ -603,7 +636,7 @@ export default function VaultPage() {
     };
 
     fetchEvents();
-  }, [publicClient, activeVaultType]);
+  }, [publicClient, activeVaultType, KEEPER_ADDRESS]);
 
   useEffect(() => {
     setMounted(true);
@@ -721,11 +754,15 @@ export default function VaultPage() {
   const hfDisplay = loadingHF ? "..." : formattedHF;
   const ltvDisplay = (loadingMusdcBal || loadingRate || loadingBorrow)
     ? "..."
-    : currentLTV !== null
+    : (currentLTV !== null && currentLTV !== undefined && !isNaN(currentLTV))
       ? `${currentLTV.toFixed(2)}%`
       : "Error";
   const venueDisplay = loadingVenue ? "Loading..." : (activeVenue || "Error");
-  const assetsDisplay = loadingAssets ? "Loading..." : (totalAssets !== null ? `${totalAssets.toFixed(2)} USDC` : "Error");
+  const assetsDisplay = loadingAssets 
+    ? "Loading..." 
+    : (totalAssets !== null && totalAssets !== undefined && !isNaN(totalAssets))
+      ? `${totalAssets.toFixed(2)} USDC` 
+      : "Error";
 
   const activeDiscussions = discussions.filter(
     (d: any) => d.vaultName.toLowerCase() === activeVaultType.toLowerCase()
@@ -840,7 +877,7 @@ export default function VaultPage() {
             <div>
               <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Health Factor</p>
               <span className="text-3xl font-serif font-black text-forest-dark mt-1 block">
-                {rawHealthFactorAgg 
+                {rawHealthFactorAgg !== undefined && rawHealthFactorAgg !== null && !isNaN(Number(rawHealthFactorAgg))
                   ? (Number(rawHealthFactorAgg) > 1e20 ? "∞" : (Number(rawHealthFactorAgg)/1e18).toFixed(2)) 
                   : "..."}
               </span>
@@ -867,7 +904,7 @@ export default function VaultPage() {
             <div>
               <p className="text-[9px] uppercase font-bold tracking-widest text-forest-muted">Health Factor</p>
               <span className="text-3xl font-serif font-black text-forest-dark mt-1 block">
-                {rawHealthFactorCons 
+                {rawHealthFactorCons !== undefined && rawHealthFactorCons !== null && !isNaN(Number(rawHealthFactorCons))
                   ? (Number(rawHealthFactorCons) > 1e20 ? "∞" : (Number(rawHealthFactorCons)/1e18).toFixed(2)) 
                   : "..."}
               </span>
@@ -904,10 +941,10 @@ export default function VaultPage() {
               <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${healthFactor !== null && healthFactor < VAULTS[activeVaultType].safetyThreshold ? "bg-red-500 animate-pulse" : "bg-emerald-600"}`} />
               <div>
                 <h4 className="text-sm font-bold text-forest-dark leading-none">
-                  {healthFactor !== null && healthFactor < VAULTS[activeVaultType].safetyThreshold ? "Emergency Deleverage Flagged" : "Leverage Safety Bounded"}
+                  {healthFactor !== null && healthFactor < (VAULTS[activeVaultType]?.safetyThreshold ?? 1.1) ? "Emergency Deleverage Flagged" : "Leverage Safety Bounded"}
                 </h4>
                 <p className="text-xs text-forest-muted/90 mt-1.5 leading-normal">
-                  Current Health Factor is <strong className="text-forest-dark">{hfDisplay}</strong>. Safety-critical bypass threshold set to <strong className="text-forest-dark">{VAULTS[activeVaultType].safetyThreshold.toFixed(2)}</strong>.
+                  Current Health Factor is <strong className="text-forest-dark">{hfDisplay}</strong>. Safety-critical bypass threshold set to <strong className="text-forest-dark">{VAULTS[activeVaultType]?.safetyThreshold ? VAULTS[activeVaultType].safetyThreshold.toFixed(2) : "1.10"}</strong>.
                 </p>
               </div>
             </div>
@@ -940,13 +977,13 @@ export default function VaultPage() {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-[10px] font-bold text-forest-muted uppercase">Your Shares</span>
                   <span className="font-mono font-bold text-forest-dark">
-                    {loadingUserShares ? "Loading..." : `${userVaultShares ? (Number(userVaultShares) / 1e18).toFixed(4) : "0.0000"} prtUSDC`}
+                    {loadingUserShares ? "Loading..." : `${userVaultShares && !isNaN(Number(userVaultShares)) ? (Number(userVaultShares) / 1e18).toFixed(4) : "0.0000"} prtUSDC`}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-[10px] font-bold text-forest-muted uppercase">USDC Equivalent</span>
                   <span className="font-mono font-bold text-forest-dark">
-                    {loadingUserAssets ? "Loading..." : `${userVaultAssets ? (Number(userVaultAssets) / 1e6).toFixed(2) : "0.00"} USDC`}
+                    {loadingUserAssets ? "Loading..." : `${userVaultAssets && !isNaN(Number(userVaultAssets)) ? (Number(userVaultAssets) / 1e6).toFixed(2) : "0.00"} USDC`}
                   </span>
                 </div>
               </div>
@@ -972,13 +1009,13 @@ export default function VaultPage() {
               <div>
                 <p className="text-[9px] uppercase font-bold text-forest-muted">USDC Wallet Balance</p>
                 <p className="font-mono font-bold text-forest-dark mt-1">
-                  {loadingUserUsdc ? "Loading..." : `${userUsdcBalance ? (Number(userUsdcBalance) / 1e6).toFixed(2) : "0.00"} USDC`}
+                  {loadingUserUsdc ? "Loading..." : `${userUsdcBalance && !isNaN(Number(userUsdcBalance)) ? (Number(userUsdcBalance) / 1e6).toFixed(2) : "0.00"} USDC`}
                 </p>
               </div>
               <div>
                 <p className="text-[9px] uppercase font-bold text-forest-muted">Your Vault Balance</p>
                 <p className="font-mono font-bold text-forest-dark mt-1">
-                  {loadingUserAssets ? "Loading..." : `${userVaultAssets ? (Number(userVaultAssets) / 1e6).toFixed(2) : "0.00"} USDC`}
+                  {loadingUserAssets ? "Loading..." : `${userVaultAssets && !isNaN(Number(userVaultAssets)) ? (Number(userVaultAssets) / 1e6).toFixed(2) : "0.00"} USDC`}
                 </p>
               </div>
             </div>
@@ -1086,7 +1123,7 @@ export default function VaultPage() {
                         </span>
                         <span className="text-[11px] text-forest-muted mt-0.5 leading-normal">
                           {depositFlow.stage2 === "complete" && (
-                            <>Position leveraged to <strong className="text-forest-dark font-mono font-bold">{depositFlow.stage2Ltv !== null && depositFlow.stage2Ltv !== undefined ? `${depositFlow.stage2Ltv.toFixed(2)}%` : ltvDisplay} LTV</strong>.</>
+                            <>Position leveraged to <strong className="text-forest-dark font-mono font-bold">{depositFlow.stage2Ltv !== null && depositFlow.stage2Ltv !== undefined && !isNaN(depositFlow.stage2Ltv) ? `${depositFlow.stage2Ltv.toFixed(2)}%` : ltvDisplay} LTV</strong>.</>
                           )}
                           {depositFlow.stage2 === "pending" && (
                             <>The agent will build your leveraged position on its next monitoring cycle (~30s).</>
@@ -1173,10 +1210,16 @@ export default function VaultPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-mono text-forest-muted/65 bg-forest-dark/5 px-2 py-0.5 rounded">
-                      HF: {currentDiscussion.healthFactor === Infinity ? "∞" : currentDiscussion.healthFactor.toFixed(2)}
+                      HF: {currentDiscussion.healthFactor === Infinity 
+                            ? "∞" 
+                            : (typeof currentDiscussion.healthFactor === "number" && !isNaN(currentDiscussion.healthFactor) 
+                                ? currentDiscussion.healthFactor.toFixed(2) 
+                                : "—")}
                     </span>
                     <span className="text-[9px] font-mono text-forest-muted/65 bg-forest-dark/5 px-2 py-0.5 rounded">
-                      LTV: {(currentDiscussion.currentLTV * 100).toFixed(1)}%
+                      LTV: {typeof currentDiscussion.currentLTV === "number" && !isNaN(currentDiscussion.currentLTV)
+                            ? `${(currentDiscussion.currentLTV * 100).toFixed(1)}%`
+                            : "—"}
                     </span>
                   </div>
                 </div>
