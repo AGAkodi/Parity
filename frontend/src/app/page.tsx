@@ -17,8 +17,10 @@ export default function LandingPage() {
 
   // Wagmi wallet hooks
   const { isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
+  const { connect, connectors, isPending, error: wagmiConnectError } = useConnect();
   const { disconnect } = useDisconnect();
+
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Redirect to vault dashboard if wallet is already connected
   useEffect(() => {
@@ -34,13 +36,46 @@ export default function LandingPage() {
   if (!mounted) return null;
 
   const handleConnect = () => {
+    // Early return guard: prevent duplicate calls while already pending
+    if (isPending) return;
+    setConnectionError(null);
+
     const connector = connectors.find((c: any) => c.id === "injected") || connectors[0];
     if (connector) {
-      connect({ connector });
+      connect(
+        { connector },
+        {
+          onError: (err: any) => {
+            console.error("Wallet connect error:", err);
+            const isAlreadyPending =
+              err?.code === -32002 ||
+              err?.cause?.code === -32002 ||
+              err?.message?.includes("-32002") ||
+              err?.message?.toLowerCase().includes("already pending");
+
+            if (isAlreadyPending) {
+              setConnectionError("A connection request is already open — please check your wallet extension.");
+            } else if (err?.code === 4001 || err?.cause?.code === 4001) {
+              setConnectionError("Connection request was cancelled in your wallet.");
+            } else {
+              setConnectionError(err?.shortMessage || err?.message || "Failed to connect wallet.");
+            }
+          },
+        }
+      );
     } else {
       alert("No Web3 wallet found. Please install MetaMask or Coinbase Wallet extension.");
     }
   };
+
+  const displayError = connectionError || (wagmiConnectError ? (
+    (wagmiConnectError as any)?.code === -32002 ||
+    (wagmiConnectError as any)?.cause?.code === -32002 ||
+    wagmiConnectError.message?.includes("-32002") ||
+    wagmiConnectError.message?.toLowerCase().includes("already pending")
+      ? "A connection request is already open — please check your wallet extension."
+      : wagmiConnectError.message
+  ) : null);
 
   return (
     <main className="min-h-screen w-full flex flex-col m-0 p-0">
@@ -76,11 +111,42 @@ export default function LandingPage() {
             {/* Primary Connect Wallet Call to Action */}
             <button
               onClick={handleConnect}
-              className="bg-forest-dark text-cream-light text-xs font-bold uppercase tracking-wider px-8 py-4 rounded-xl hover:bg-forest-dark/90 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+              disabled={isPending}
+              className={`bg-forest-dark text-cream-light text-xs font-bold uppercase tracking-wider px-8 py-4 rounded-xl transition-all flex items-center gap-2 shadow-sm ${
+                isPending
+                  ? "opacity-60 cursor-not-allowed"
+                  : "hover:bg-forest-dark/90 cursor-pointer"
+              }`}
             >
-              Connect Wallet to Enter Vault
-              <ArrowUpRight className="w-4 h-4" />
+              {isPending ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-cream-light border-t-transparent rounded-full animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  Connect Wallet to Enter Vault
+                  <ArrowUpRight className="w-4 h-4" />
+                </>
+              )}
             </button>
+
+            {/* Connection Error Banner */}
+            {displayError && (
+              <div className="mt-4 p-3 bg-amber-50 border border-amber-300/80 rounded-xl text-xs text-amber-900 flex items-start justify-between gap-2 max-w-lg shadow-xs">
+                <div className="flex items-start gap-2">
+                  <span className="text-sm shrink-0">⚠️</span>
+                  <span className="leading-snug">{displayError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConnectionError(null)}
+                  className="text-[10px] font-bold uppercase tracking-wider text-amber-900/60 hover:text-amber-900 shrink-0 cursor-pointer ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Footer info / Meta */}
@@ -298,10 +364,24 @@ export default function LandingPage() {
               </div>
               <button
                 onClick={handleConnect}
-                className="bg-forest-dark text-cream-light text-xs font-bold uppercase tracking-wider px-6 py-3.5 rounded-xl hover:bg-forest-dark/90 transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-sm"
+                disabled={isPending}
+                className={`bg-forest-dark text-cream-light text-xs font-bold uppercase tracking-wider px-6 py-3.5 rounded-xl transition-all flex items-center gap-2 shrink-0 shadow-sm ${
+                  isPending
+                    ? "opacity-60 cursor-not-allowed"
+                    : "hover:bg-forest-dark/90 cursor-pointer"
+                }`}
               >
-                Explore Parity
-                <ArrowUpRight className="w-4 h-4" />
+                {isPending ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-cream-light border-t-transparent rounded-full animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  <>
+                    Explore Parity
+                    <ArrowUpRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </div>
 
@@ -344,9 +424,12 @@ export default function LandingPage() {
               </a>
               <button 
                 onClick={handleConnect} 
-                className="text-xs text-cream-light/75 hover:text-cream-light transition-colors text-left cursor-pointer"
+                disabled={isPending}
+                className={`text-xs text-cream-light/75 hover:text-cream-light transition-colors text-left ${
+                  isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+                }`}
               >
-                Connect Wallet
+                {isPending ? "Connecting..." : "Connect Wallet"}
               </button>
               <Link 
                 href="/vault" 

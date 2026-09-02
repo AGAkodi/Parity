@@ -192,10 +192,12 @@ export default function VaultPage() {
 
   // Wagmi wallet and network hooks
   const { address, isConnected, chainId } = useAccount();
-  const { connect, connectors } = useConnect();
+  const { connect, connectors, isPending: isConnectPending, error: wagmiConnectError } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
+
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const isWrongChain = isConnected && chainId !== 84532; // Base Sepolia Chain ID is 84532
 
@@ -657,12 +659,34 @@ export default function VaultPage() {
   const hasUsdcBalance = userUsdcBalance !== undefined && userUsdcBalance >= amountInWei;
 
   const handleConnect = () => {
+    if (isConnectPending) return;
+    setConnectionError(null);
     if (isConnected) {
       disconnect();
     } else {
       const connector = connectors.find((c: any) => c.id === "injected") || connectors[0];
       if (connector) {
-        connect({ connector });
+        connect(
+          { connector },
+          {
+            onError: (err: any) => {
+              console.error("Wallet connect error:", err);
+              const isAlreadyPending =
+                err?.code === -32002 ||
+                err?.cause?.code === -32002 ||
+                err?.message?.includes("-32002") ||
+                err?.message?.toLowerCase().includes("already pending");
+
+              if (isAlreadyPending) {
+                setConnectionError("A connection request is already open — please check your wallet extension.");
+              } else if (err?.code === 4001 || err?.cause?.code === 4001) {
+                setConnectionError("Connection request was cancelled in your wallet.");
+              } else {
+                setConnectionError(err?.shortMessage || err?.message || "Failed to connect wallet.");
+              }
+            },
+          }
+        );
       } else {
         alert("No injected browser wallet found (MetaMask, Coinbase Wallet etc.).");
       }
@@ -737,14 +761,28 @@ export default function VaultPage() {
             <span className="font-serif font-black tracking-widest text-xl text-forest-dark uppercase">Parity</span>
           </div>
 
-          <button
-            onClick={handleConnect}
-            className="text-[10px] tracking-wider uppercase font-bold px-4 py-2 border border-forest-dark/20 rounded-full hover:bg-forest-dark hover:text-cream-light transition-all cursor-pointer"
-          >
-            {isConnected && address
-              ? `${address.slice(0, 6)}...${address.slice(-4)} (Connected)`
-              : "Connect Wallet"}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={handleConnect}
+              disabled={isConnectPending}
+              className={`text-[10px] tracking-wider uppercase font-bold px-4 py-2 border border-forest-dark/20 rounded-full transition-all ${
+                isConnectPending
+                  ? "opacity-60 cursor-not-allowed"
+                  : "hover:bg-forest-dark hover:text-cream-light cursor-pointer"
+              }`}
+            >
+              {isConnectPending
+                ? "Connecting..."
+                : isConnected && address
+                ? `${address.slice(0, 6)}...${address.slice(-4)} (Connected)`
+                : "Connect Wallet"}
+            </button>
+            {connectionError && (
+              <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                {connectionError}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Hero Headline & Intro */}
