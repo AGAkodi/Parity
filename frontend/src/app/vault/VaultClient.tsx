@@ -346,18 +346,33 @@ export default function VaultPage() {
     ? Number(rawTotalAssets) / 1e6 
     : null;
 
-  const currentLTV = (rawMusdcBalance !== undefined && rawExchangeRate !== undefined && rawBorrowBalance !== undefined)
+  const currentLTV = (rawMusdcBalance && rawExchangeRate && rawBorrowBalance)
     ? (() => {
-        const supplied = (BigInt(rawMusdcBalance) * BigInt(rawExchangeRate)) / 10n ** 18n;
-        const borrowed = BigInt(rawBorrowBalance);
-        return supplied > 0n ? Number((borrowed * 10000n) / supplied) / 100 : 0;
+        try {
+          const supplied = (BigInt(rawMusdcBalance) * BigInt(rawExchangeRate)) / 10n ** 18n;
+          const borrowed = BigInt(rawBorrowBalance);
+          if (supplied <= 0n) return 0;
+          const calculated = Number((borrowed * 10000n) / supplied) / 100;
+          return isFinite(calculated) && !isNaN(calculated) ? calculated : 0;
+        } catch {
+          return 0;
+        }
       })()
     : null;
 
   const secondsInYear = 31536000n;
-  const supplyApy = (rawSupplyRate !== undefined && rawSupplyRate !== null && !isNaN(Number(rawSupplyRate)))
-    ? (Number(BigInt(rawSupplyRate) * secondsInYear) / 1e16).toFixed(2)
-    : "8.33";
+  const supplyApy = (() => {
+    if (rawSupplyRate === undefined || rawSupplyRate === null) return "8.33";
+    try {
+      const rateNum = Number(BigInt(rawSupplyRate) * secondsInYear) / 1e16;
+      if (isNaN(rateNum) || !isFinite(rateNum) || rateNum < 0 || rateNum > 500) {
+        return "8.33";
+      }
+      return rateNum.toFixed(2);
+    } catch {
+      return "8.33";
+    }
+  })();
 
   const formattedHF = (healthFactor === null || healthFactor === undefined || isNaN(healthFactor))
     ? "..." 
@@ -611,8 +626,45 @@ export default function VaultPage() {
             status = "Bypass (Safety Check)";
           }
 
-          const apyVal = apySnapshot !== undefined && apySnapshot !== null ? Number(apySnapshot) : null;
-          const apyFormatted = apyVal !== null && !isNaN(apyVal) ? `${(apyVal / 100).toFixed(2)}%` : "—";
+          // Parse and format APY snapshot safely:
+          // KeeperAction emits uint256 apySnapshot scaled to 18 decimals (1e18 = 100% or 1.0 = 100%).
+          // E.g., for 5.13% APY, apySnapshot is 51271093624587263 (5.13e16).
+          // Dividing by 100 caused the displayed Net APY to blow up to 512710936245872.63%.
+          let apyFormatted = "—";
+          if (apySnapshot !== undefined && apySnapshot !== null) {
+            try {
+              const apyBig = BigInt(apySnapshot);
+              if (apyBig === 0n) {
+                apyFormatted = "0.00%";
+              } else {
+                const apyVal = Number(apyBig);
+                if (isFinite(apyVal) && !isNaN(apyVal)) {
+                  let pct = 0;
+                  // If scaled by 1e18 (>= 1e12), convert to percentage by dividing by 1e16
+                  if (Math.abs(apyVal) >= 1e12) {
+                    pct = apyVal / 1e16;
+                  } else if (Math.abs(apyVal) >= 1) {
+                    // Basis points scale
+                    pct = apyVal / 100;
+                  } else {
+                    // Decimal fraction scale
+                    pct = apyVal * 100;
+                  }
+
+                  // Sanity-check: APY should be finite and within realistic bounds (-100% to 500%)
+                  if (isFinite(pct) && !isNaN(pct) && pct >= -100 && pct <= 500) {
+                    apyFormatted = `${pct.toFixed(2)}%`;
+                  } else {
+                    apyFormatted = "N/A";
+                  }
+                } else {
+                  apyFormatted = "N/A";
+                }
+              }
+            } catch {
+              apyFormatted = "—";
+            }
+          }
 
           return {
             time: timeStr,
@@ -1217,7 +1269,7 @@ export default function VaultPage() {
                                 : "—")}
                     </span>
                     <span className="text-[9px] font-mono text-forest-muted/65 bg-forest-dark/5 px-2 py-0.5 rounded">
-                      LTV: {typeof currentDiscussion.currentLTV === "number" && !isNaN(currentDiscussion.currentLTV)
+                      LTV: {typeof currentDiscussion.currentLTV === "number" && !isNaN(currentDiscussion.currentLTV) && isFinite(currentDiscussion.currentLTV) && currentDiscussion.currentLTV >= 0 && currentDiscussion.currentLTV <= 2
                             ? `${(currentDiscussion.currentLTV * 100).toFixed(1)}%`
                             : "—"}
                     </span>

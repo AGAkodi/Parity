@@ -136,8 +136,16 @@ async function printCurrentState(
     const supplyAPY = Math.pow(1 + Number(supplyRate) / 1e18, SECONDS_PER_YEAR) - 1;
     const borrowAPY = Math.pow(1 + Number(borrowRate) / 1e18, SECONDS_PER_YEAR) - 1;
 
-    const leverageFactor = 1 / (1 - currentLTV);
-    const netMoonwellAPY = supplyAPY * leverageFactor - borrowAPY * (leverageFactor - 1);
+    const denom = 1 - currentLTV;
+    const leverageFactor = (borrowed > 0n && currentLTV > 0.001 && currentLTV < 0.95 && denom > 0.05)
+        ? 1 / denom
+        : 1;
+    let netMoonwellAPY = (leverageFactor > 1)
+        ? supplyAPY * leverageFactor - borrowAPY * (leverageFactor - 1)
+        : supplyAPY;
+    if (!isFinite(netMoonwellAPY) || isNaN(netMoonwellAPY) || netMoonwellAPY > 5.0 || netMoonwellAPY < -5.0) {
+        netMoonwellAPY = supplyAPY;
+    }
 
     const cfRaw = await comptroller.collateralFactors(MOONWELL_MUSDC);
     const collateralFactor = Number(cfRaw) / 1e18;

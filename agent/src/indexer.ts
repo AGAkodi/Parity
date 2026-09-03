@@ -83,7 +83,16 @@ export async function indexPastEvents(
             const reason = args.reason;
             const hfBefore = args.hfBefore === ethers.MaxUint256 ? "Infinity" : (Number(args.hfBefore) / 1e18).toFixed(4);
             const hfAfter = args.hfAfter === ethers.MaxUint256 ? "Infinity" : (Number(args.hfAfter) / 1e18).toFixed(4);
-            const apy = (Number(args.apySnapshot) / 1e18 * 100).toFixed(2);
+            const rawApy = Number(args.apySnapshot);
+            let apy = "—";
+            if (!isNaN(rawApy) && isFinite(rawApy)) {
+                const apyPct = Math.abs(rawApy) >= 1e12 ? (rawApy / 1e18) * 100 : (Math.abs(rawApy) >= 1 ? rawApy / 100 : rawApy * 100);
+                if (isFinite(apyPct) && apyPct >= -100 && apyPct <= 500) {
+                    apy = apyPct.toFixed(2);
+                } else {
+                    apy = "N/A";
+                }
+            }
 
             description = `🤖 Keeper Action [${action.toUpperCase()}]: ${reason} | HF: ${hfBefore} ➔ ${hfAfter} | Net APY: ${apy}%`;
         }

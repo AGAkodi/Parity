@@ -501,17 +501,37 @@ export async function runMonitoringCycle(
         const totalBorrows = await mUSDC.totalBorrows();
         const reserves = await mUSDC.totalReserves();
 
-        // Compounding APY Calculations
-        supplyAPY = Math.pow(1 + Number(supplyRate) / 1e18, SECONDS_PER_YEAR) - 1;
-        borrowAPY = Math.pow(1 + Number(borrowRate) / 1e18, SECONDS_PER_YEAR) - 1;
+        // Compounding APY Calculations (guard against negative or invalid rates)
+        const safeSupplyRate = Number(supplyRate) / 1e18;
+        const safeBorrowRate = Number(borrowRate) / 1e18;
+        supplyAPY = isFinite(safeSupplyRate) && safeSupplyRate >= 0
+            ? Math.pow(1 + safeSupplyRate, SECONDS_PER_YEAR) - 1
+            : 0;
+        borrowAPY = isFinite(safeBorrowRate) && safeBorrowRate >= 0
+            ? Math.pow(1 + safeBorrowRate, SECONDS_PER_YEAR) - 1
+            : 0;
 
         // Net Leveraged APY on Moonwell
-        const leverageFactor = 1 / (1 - currentLTV);
-        netMoonwellAPY = supplyAPY * leverageFactor - borrowAPY * (leverageFactor - 1);
+        // Guard against division-by-zero or near-zero denominator (1 - currentLTV)
+        // If unleveraged (borrowed == 0 or currentLTV <= 0) or if LTV approaches/exceeds 95%,
+        // safely fallback to the unleveraged base supply APY.
+        const denom = 1 - currentLTV;
+        if (borrowed > 0n && currentLTV > 0.001 && currentLTV < 0.95 && denom > 0.05) {
+            const leverageFactor = 1 / denom;
+            netMoonwellAPY = supplyAPY * leverageFactor - borrowAPY * (leverageFactor - 1);
+        } else {
+            // Safe fallback to unleveraged base supply rate
+            netMoonwellAPY = supplyAPY;
+        }
+
+        // Cap or sanity-check netMoonwellAPY (realistically should never be infinite, NaN, or absurdly unbounded)
+        if (!isFinite(netMoonwellAPY) || isNaN(netMoonwellAPY) || netMoonwellAPY > 5.0 || netMoonwellAPY < -5.0) {
+            netMoonwellAPY = supplyAPY;
+        }
 
         // Utilization calculation
-        const denom = Number(cash) + Number(totalBorrows) - Number(reserves);
-        utilization = denom > 0 ? Number(totalBorrows) / denom : 0;
+        const denomUtil = Number(cash) + Number(totalBorrows) - Number(reserves);
+        utilization = denomUtil > 0 ? Number(totalBorrows) / denomUtil : 0;
 
         // Fetch Morpho APY (Fallback to mock override or configured mock in .env)
         morphoAPY = morphoAPYOverride !== undefined ? morphoAPYOverride : Number(process.env.MORPHO_APY_MOCK || "0.047");
@@ -526,7 +546,10 @@ export async function runMonitoringCycle(
         log(`Morpho Flagship USDC APY: ${(morphoAPY * 100).toFixed(2)}%`);
 
         const rawApy = activeVenue === mUSDCAddress ? netMoonwellAPY : morphoAPY;
-        apySnapshot = ethers.parseEther(Math.max(0, rawApy).toFixed(18));
+        const safeApy = (!isFinite(rawApy) || isNaN(rawApy) || rawApy > 5.0 || rawApy < 0)
+            ? (activeVenue === mUSDCAddress && isFinite(supplyAPY) ? Math.max(0, supplyAPY) : 0.047)
+            : Math.max(0, rawApy);
+        apySnapshot = ethers.parseEther(safeApy.toFixed(18));
 
     } catch (readError: any) {
         log(`RPC read error in monitoring cycle: ${readError.message || readError}`, "error");
