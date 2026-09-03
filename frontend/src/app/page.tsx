@@ -86,9 +86,11 @@ export default function LandingPage() {
         <section className="w-full lg:w-[45%] bg-cream-light p-8 md:p-16 lg:p-24 flex flex-col justify-between items-start shrink-0">
           
           {/* Navigation / Header */}
-          <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="Parity Logo" className="w-9 h-9 object-contain rounded-lg shadow-sm" />
-            <span className="font-serif font-black tracking-widest text-xl text-forest-dark uppercase">Parity</span>
+          <div className="flex items-center gap-3.5 cursor-pointer shrink-0 group">
+            <div className="w-12 h-12 rounded-2xl bg-forest-dark border border-forest-dark/20 p-2 flex items-center justify-center shadow-sm shrink-0 group-hover:scale-105 transition-transform">
+              <img src="/logo.png" alt="Parity Logo" className="w-full h-full object-contain" />
+            </div>
+            <span className="font-serif font-black tracking-widest text-2xl text-forest-dark uppercase">Parity</span>
           </div>
 
           {/* Hero Headline & Intro */}
