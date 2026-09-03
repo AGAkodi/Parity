@@ -1024,7 +1024,7 @@ export default function VaultPage() {
                 <p className="text-[10px] font-bold tracking-[0.2em] text-forest-muted uppercase mb-4">
                   One Engine. Constant Vigilance.
                 </p>
-                <h1 className="text-4xl sm:text-5xl md:text-[5rem] font-serif font-black text-forest-dark tracking-tight leading-[0.88] uppercase mb-8 break-words">
+                <h1 className="text-3xl sm:text-4xl md:text-4xl lg:text-[3rem] xl:text-[3.5rem] font-serif font-black text-forest-dark tracking-tight leading-[0.95] uppercase mb-8 break-normal [word-break:normal] [overflow-wrap:normal]">
                   The Agent<br />
                   That Watches<br />
                   Your Yield,<br />
@@ -1265,7 +1265,7 @@ export default function VaultPage() {
                 <p className="text-[10px] font-bold tracking-[0.2em] text-forest-muted uppercase mb-4">
                   Autonomous Consensus
                 </p>
-                <h1 className="text-4xl sm:text-5xl md:text-[5rem] font-serif font-black text-forest-dark tracking-tight leading-[0.88] uppercase mb-8 break-words">
+                <h1 className="text-3xl sm:text-4xl md:text-4xl lg:text-[2.75rem] xl:text-[3.25rem] font-serif font-black text-forest-dark tracking-tight leading-[0.95] uppercase mb-8 break-normal [word-break:normal] [overflow-wrap:normal]">
                   Watch<br />
                   The Engine<br />
                   Deliberate.
@@ -1482,7 +1482,7 @@ export default function VaultPage() {
                 <p className="text-[10px] font-bold tracking-[0.2em] text-forest-muted uppercase mb-4">
                   On-Chain Execution
                 </p>
-                <h1 className="text-4xl sm:text-5xl md:text-[5rem] font-serif font-black text-forest-dark tracking-tight leading-[0.88] uppercase mb-8 break-words">
+                <h1 className="text-3xl sm:text-4xl md:text-4xl lg:text-[2.75rem] xl:text-[3.25rem] font-serif font-black text-forest-dark tracking-tight leading-[0.95] uppercase mb-8 break-normal [word-break:normal] [overflow-wrap:normal]">
                   Confirmed<br />
                   Autonomous<br />
                   Actions.
@@ -1529,7 +1529,7 @@ export default function VaultPage() {
                           {activeLog.status}
                         </span>
                         
-                        <h3 className="text-2xl sm:text-3xl font-serif italic text-forest-dark font-black mt-3 leading-tight break-words">
+                        <h3 className="text-2xl sm:text-3xl font-serif italic text-forest-dark font-black mt-3 leading-tight break-normal [word-break:normal] [overflow-wrap:normal]">
                           {activeLog.action === "HOLD" && "Decision on Hold."}
                           {activeLog.action === "REBALANCE" && "Rebalance to Target."}
                           {activeLog.action === "DELEVERAGE" && "Deleverage Safety."}
