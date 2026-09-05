@@ -930,8 +930,8 @@ export default function VaultPage() {
             className="flex items-center gap-3 cursor-pointer shrink-0 group" 
             onClick={() => router.push("/")}
           >
-            <div className="w-10 h-10 rounded-xl bg-forest-dark border border-forest-dark/20 p-1.5 flex items-center justify-center shadow-xs shrink-0 group-hover:scale-105 transition-transform">
-              <img src="/logo.png" alt="Parity Logo" className="w-full h-full object-contain" />
+            <div className="h-9 sm:h-10 w-auto flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <img src="/logo.png" alt="Parity Logo" className="h-full w-auto object-contain" />
             </div>
             <span className="font-serif font-black tracking-widest text-xl sm:text-2xl text-forest-dark uppercase">
               Parity
